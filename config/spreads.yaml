@@ -1,0 +1,6 @@
+generate_main_second: true
+generate_adjacent: true
+zscore_windows: [20, 60]
+min_days_to_delivery: 10
+configured_pairs: []
+

@@ -1,0 +1,61 @@
+# QuantView 农产品期货日报｜{{ trade_date }}
+
+> 生成时间：{{ generated_at.strftime('%Y-%m-%d %H:%M:%S %z') }}  
+> 数据状态：{{ run.status }}｜接受 {{ run.rows_accepted }} 行｜拒绝 {{ run.rows_rejected }} 行  
+> 本报告仅用于个人研究，不构成投资建议；系统不具备下单能力。
+
+## 市场总览
+
+| 品种 | 主力 | 结算价 | 5日收益 | 20日收益 | 总成交变化 | 总持仓变化 | 量价仓状态 | AI倾向 |
+|---|---:|---:|---:|---:|---:|---:|---|---|
+{% for item in products -%}
+| {{ item.product }} | {{ item.main_contract }}{% if item.main_changed %}（换月）{% endif %} | {{ item.main_settlement|num }} | {{ item.return_5d|pct }} | {{ item.return_20d|pct }} | {{ item.total_volume_change|integer }} | {{ item.total_oi_change|integer }} | {{ item.price_oi_regime }} | {{ ai_by_product.get(item.product, {}).get('bias', '未运行') }} |
+{% endfor %}
+
+{% for item in products %}
+## {{ item.product }}
+
+- 主力/次主力：{{ item.main_contract }} / {{ item.second_contract or '—' }}；主力成交占比 {{ item.main_volume_share|pct }}，主力持仓占比 {{ item.main_oi_share|pct }}。
+- 趋势：5 日收益 {{ item.return_5d|pct }}，20 日收益 {{ item.return_20d|pct }}，ATR20 {{ item.atr_20|num }}。
+- 成交与持仓：总成交 {{ item.total_volume|integer }}（变化 {{ item.total_volume_change|integer }}），总持仓 {{ item.total_open_interest|integer }}（变化 {{ item.total_oi_change|integer }}）。
+- 状态解释：`{{ item.price_oi_regime }}` 只描述价格与总持仓的共同变化，不能据此识别主动多头或主动空头。
+
+### 主力—次主力价差
+
+{% set product_spreads = spreads_by_product.get(item.product, []) -%}
+{% if product_spreads %}
+| 近月 | 远月 | 结算价差 | 日变化 | Z20 | Z60 | 60日分位 | 流动性 |
+|---|---|---:|---:|---:|---:|---:|---|
+{% for spread in product_spreads -%}
+| {{ spread.near_contract }} | {{ spread.far_contract }} | {{ spread.settlement_spread|num }} | {{ spread.spread_change|num }} | {{ spread.zscore_20|num }} | {{ spread.zscore_60|num }} | {{ spread.percentile_60|pct }} | {{ spread.liquidity_status }} |
+{% endfor %}
+{% else %}
+当日没有可用的主力—次主力价差。
+{% endif %}
+
+### AI 多空研究
+
+{% set analysis = ai_by_product.get(item.product) -%}
+{% if analysis %}
+- 多头论证：{{ analysis.bull_case.thesis }}
+- 空头论证：{{ analysis.bear_case.thesis }}
+- 综合判断：**{{ analysis.bias }}**（模型自评 {{ analysis.confidence|pct }}）— {{ analysis.judge_view }}
+- 风险：{{ analysis.risk_flags|join('；') if analysis.risk_flags else '未列出' }}
+- 推翻条件：{{ analysis.invalidation_conditions|join('；') if analysis.invalidation_conditions else '未列出' }}
+{% else %}
+AI 未运行或运行失败；以上确定性数据仍然有效。
+{% endif %}
+
+{% endfor %}
+## 数据质量与运行说明
+
+{% if run.source_errors %}
+数据源异常：
+{% for error in run.source_errors -%}
+- {{ error.get('product', '') }} {{ error.get('symbol', '') }} / {{ error.get('source', '') }}：{{ error.get('error', '') }}
+{% endfor %}
+{% else %}
+本次运行未记录数据源异常。
+{% endif %}
+
+AI 只能解释本报告 Evidence Pack 中的价格、期限结构、成交和持仓证据；报告不包含未验证的供需、政策、天气、现货或新闻事实。

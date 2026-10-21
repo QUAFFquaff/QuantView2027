@@ -1,0 +1,32 @@
+paths:
+  database: data/warehouse/quantview.duckdb
+  raw: data/raw
+  reports: reports/daily
+  logs: logs
+
+pipeline:
+  scheduled_time: "18:10"
+  default_lookback_days: 90
+  request_retries: 2
+  request_timeout_seconds: 30
+  lock_file: data/warehouse/pipeline.lock
+
+data_sources:
+  daily_priority:
+    - akshare_sina
+    - akshare_em
+  save_raw_snapshots: true
+
+ai:
+  enabled: true
+  provider: openai_compatible
+  model_env: QUANTVIEW_AI_MODEL
+  default_model: gpt-5-mini
+  timeout_seconds: 90
+  max_retries: 1
+
+analytics:
+  return_windows: [5, 20]
+  zscore_windows: [20, 60]
+  flat_return_threshold: 0.001
+

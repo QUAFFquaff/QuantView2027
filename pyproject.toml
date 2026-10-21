@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quantview2027"
+version = "0.1.0"
+description = "Local-first research workbench for Chinese agricultural futures"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary - personal use" }
+dependencies = [
+  "akshare>=1.17",
+  "duckdb>=1.1",
+  "jinja2>=3.1",
+  "openai>=1.50",
+  "pandas>=2.1",
+  "plotly>=5.20",
+  "pyarrow>=15",
+  "python-dotenv>=1.0",
+  "pyyaml>=6.0",
+  "streamlit>=1.40",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "ruff>=0.8",
+]
+
+[project.scripts]
+quantview = "quantview.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+quantview = ["reports/templates/*.j2"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+  "integration: tests that call external data services",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
+
