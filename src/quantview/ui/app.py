@@ -9,6 +9,7 @@ import streamlit as st
 
 from quantview.config import load_settings
 from quantview.data.repository import Repository
+from quantview.operations import build_health_snapshot
 from quantview.pipeline import DailyPipeline
 
 st.set_page_config(page_title="QuantView2027", page_icon="📈", layout="wide")
@@ -21,6 +22,18 @@ st.caption("本地只读研究界面｜LH 生猪・JD 鸡蛋・C 玉米｜不具
 if not settings.database_path.exists():
     st.warning("数据库尚未创建。请先运行 `quantview init-db` 和 `quantview run-daily`。")
     st.stop()
+
+health = build_health_snapshot(repository, settings.products, as_of=date.today())
+health_labels = {
+    "healthy": "正常",
+    "due": "待今日更新",
+    "stale": "数据滞后",
+    "incomplete": "品种不完整",
+    "failed": "最近任务失败",
+    "empty": "无数据",
+}
+st.sidebar.metric("运行状态", health_labels[health["overall_status"]])
+st.sidebar.caption("新鲜度按工作日估算，暂未扣除交易所节假日。")
 
 dates = repository.query("SELECT DISTINCT trade_date FROM product_daily ORDER BY trade_date DESC")
 if dates.empty:
@@ -157,11 +170,35 @@ with curve_tab:
         )
 
 with report_tab:
+    st.subheader("运行健康度")
+    health_col, coverage_col, trial_col = st.columns(3)
+    health_col.metric("数据状态", health_labels[health["overall_status"]])
+    coverage_col.metric(
+        "品种覆盖",
+        f"{health['coverage']['count']}/{health['coverage']['expected_count']}",
+    )
+    trial_col.metric(
+        "5 日试运行",
+        f"{health['trial']['completed_days']}/{health['trial']['target_days']}",
+    )
+    if health["coverage"]["missing"]:
+        st.error("缺少品种：" + "、".join(health["coverage"]["missing"]))
+    if health["business_days_behind"] is not None and health["business_days_behind"] > 1:
+        st.warning(
+            f"最新行情日为 {health['latest_market_date']}，"
+            f"按工作日估算滞后 {health['business_days_behind']} 日。"
+        )
+    latest_run = health["latest_run"]
+    if latest_run and latest_run["source_errors"]:
+        with st.expander(f"最近任务异常（{len(latest_run['source_errors'])}）"):
+            st.json(latest_run["source_errors"])
+
+    st.subheader("Markdown 日报")
     report_path = settings.path("reports") / f"{selected_date:%Y}" / f"{selected_date:%m}" / f"{selected_date}.md"
     if report_path.exists():
         st.markdown(report_path.read_text(encoding="utf-8"))
     else:
         st.info("该交易日没有 Markdown 日报。")
-    st.subheader("最近运行")
+    st.subheader("最近运行记录")
     runs = repository.query("SELECT * FROM pipeline_run ORDER BY started_at DESC LIMIT 20")
     st.dataframe(runs, width="stretch", hide_index=True)

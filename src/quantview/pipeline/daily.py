@@ -40,6 +40,15 @@ def pipeline_lock(path: Path) -> Iterator[None]:
         path.unlink(missing_ok=True)
 
 
+def classify_run_status(rows_accepted: int, products_found: int, products_expected: int) -> str:
+    """Classify whether the target day's persisted dataset is usable."""
+    if products_found == 0:
+        return "failed"
+    if products_found < products_expected or rows_accepted == 0:
+        return "partial"
+    return "success"
+
+
 class DailyPipeline:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -218,22 +227,37 @@ class DailyPipeline:
                 target_products = product_daily.loc[
                     pd.to_datetime(product_daily["trade_date"]).dt.date == target
                 ]
+                product_count = len(target_products)
                 stages["analytics"] = {
-                    "status": "success" if len(target_products) == len(self.settings.products) else "partial",
-                    "products": len(target_products),
+                    "status": (
+                        "success"
+                        if product_count == len(self.settings.products)
+                        else "failed" if product_count == 0 else "partial"
+                    ),
+                    "products": product_count,
                 }
                 ai_count = self._run_ai(target, product_daily, spreads, source_errors)
                 stages["ai"] = {"status": "success" if ai_count else "skipped", "products": ai_count}
-                status = "success" if len(target_products) == len(self.settings.products) else "partial"
-                run_meta = {
-                    "status": status,
-                    "rows_accepted": accepted,
-                    "rows_rejected": rejected,
-                    "source_errors": source_errors,
-                }
-                output = render_daily_report(self.repository, self.settings.root, target, run_meta)
-                report_path = str(output)
-                stages["report"] = {"status": "success", "path": report_path}
+                status = classify_run_status(
+                    accepted, product_count, len(self.settings.products)
+                )
+                if status == "failed":
+                    stages["report"] = {
+                        "status": "skipped",
+                        "reason": "No target-date product data",
+                    }
+                else:
+                    run_meta = {
+                        "status": status,
+                        "rows_accepted": accepted,
+                        "rows_rejected": rejected,
+                        "source_errors": source_errors,
+                    }
+                    output = render_daily_report(
+                        self.repository, self.settings.root, target, run_meta
+                    )
+                    report_path = str(output)
+                    stages["report"] = {"status": "success", "path": report_path}
         except Exception as exc:
             status = "failed"
             source_errors.append({"source": "pipeline", "error": str(exc)})

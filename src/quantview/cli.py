@@ -10,6 +10,7 @@ from datetime import date, timedelta
 from quantview.config import load_settings
 from quantview.data.manual_import import import_market_file
 from quantview.data.repository import Repository
+from quantview.operations import build_health_snapshot
 from quantview.pipeline import DailyPipeline
 
 
@@ -32,6 +33,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="quantview", description="QuantView2027 research workbench")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("doctor", help="Check local runtime and configuration")
+    status = commands.add_parser("status", help="Show data freshness and trial-run health")
+    status.add_argument("--date", type=_date, default=date.today())
+    status.add_argument("--trial-days", type=int, default=5)
     commands.add_parser("init-db", help="Create or upgrade the DuckDB schema")
     discover = commands.add_parser("discover-contracts", help="Discover and register LH/JD/C contracts")
     discover.add_argument("--date", type=_date, default=date.today())
@@ -52,6 +56,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         return _doctor()
     settings = load_settings()
+    if args.command == "status":
+        if not settings.database_path.exists():
+            print(
+                json.dumps(
+                    {"overall_status": "empty", "database": str(settings.database_path)},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 1
+        snapshot = build_health_snapshot(
+            Repository(settings.database_path),
+            settings.products,
+            as_of=args.date,
+            trial_days=max(args.trial_days, 1),
+        )
+        print(json.dumps(snapshot, ensure_ascii=False, indent=2, default=str))
+        return 0 if snapshot["overall_status"] in {"healthy", "due"} else 1
     pipeline = DailyPipeline(settings)
     if args.command == "init-db":
         Repository(settings.database_path).initialize()

@@ -15,6 +15,7 @@ python -m pip install -e ".[dev]"
 Copy-Item .env.example .env
 quantview init-db
 quantview doctor
+quantview status
 quantview run-daily
 quantview ui
 ```
@@ -41,6 +42,7 @@ quantview ui
 
 ```powershell
 quantview doctor
+quantview status --date 2026-10-22
 quantview init-db
 quantview discover-contracts
 quantview run-daily --date 2026-10-20
