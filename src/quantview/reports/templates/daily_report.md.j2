@@ -4,6 +4,30 @@
 > 数据状态：{{ run.status }}｜接受 {{ run.rows_accepted }} 行｜拒绝 {{ run.rows_rejected }} 行  
 > 本报告仅用于个人研究，不构成投资建议；系统不具备下单能力。
 
+{% if run.get('completeness') %}
+## 目标日合约完整性
+
+完整性以本次任务的已知合约集合为基准；不等同于已核验交易所全部挂牌合约。缺失合约可能影响主力识别、品种汇总和价差。
+
+| 品种 | 状态 | 可用合约数 | 预期合约数 | 缺失合约 | 数据来源 |
+|---|---|---:|---:|---|---|
+{% for product, quality in run.completeness.items() -%}
+| {{ product }} | {{ quality.status }} | {{ quality.available_contracts|length }} | {{ quality.expected_contracts|length }} | {{ quality.missing_contracts|join('、') or '—' }} | {{ quality.sources|join('、') or '—' }} |
+{% endfor %}
+
+{% for product, quality in run.completeness.items() %}
+{% if quality.status != 'complete' %}
+- {{ product }}：数据不完整或合约集合未经确认（至少需要 {{ quality.minimum_contracts }} 个有效合约且已知合约无缺失），本次跳过 AI 分析；确定性指标仅供核对。
+{% endif %}
+{% for warning in quality.coverage_warnings %}
+- {{ product }}：{{ warning }}（合约清单来源：{{ quality.universe_source }}，本地候选清单不能证明完整挂牌集合）。
+{% endfor %}
+{% for warning in quality.quality_warnings %}
+- {{ product }} {{ warning.contract }}：{{ warning.flags|join('、') }}。
+{% endfor %}
+{% endfor %}
+{% endif %}
+
 ## 市场总览
 
 | 品种 | 主力 | 结算价 | 5日收益 | 20日收益 | 总成交变化 | 总持仓变化 | 量价仓状态 | AI倾向 |
@@ -43,7 +67,7 @@
 - 风险：{{ analysis.risk_flags|join('；') if analysis.risk_flags else '未列出' }}
 - 推翻条件：{{ analysis.invalidation_conditions|join('；') if analysis.invalidation_conditions else '未列出' }}
 {% else %}
-AI 未运行或运行失败；以上确定性数据仍然有效。
+本次 AI 未运行或运行失败；请结合合约完整性与质量警告核对确定性数据。
 {% endif %}
 
 {% endfor %}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date
 from pathlib import Path
 
@@ -28,7 +29,7 @@ health_labels = {
     "healthy": "正常",
     "due": "待今日更新",
     "stale": "数据滞后",
-    "incomplete": "品种不完整",
+    "incomplete": "数据不完整",
     "failed": "最近任务失败",
     "empty": "无数据",
 }
@@ -42,6 +43,12 @@ if dates.empty:
 
 available_dates = pd.to_datetime(dates["trade_date"]).dt.date.tolist()
 selected_date = st.sidebar.selectbox("交易日", available_dates, index=0)
+selected_runs = repository.query(
+    "SELECT stages, status FROM pipeline_run WHERE target_trade_date=? ORDER BY started_at DESC LIMIT 1",
+    [selected_date],
+)
+selected_stages = json.loads(selected_runs.iloc[0]["stages"]) if not selected_runs.empty else {}
+selected_completeness = selected_stages.get("completeness", {}).get("products", {})
 latest_date = available_dates[0]
 today = date.today()
 st.sidebar.caption(f"数据库最新交易日：{latest_date}")
@@ -64,6 +71,11 @@ overview_tab, product_tab, curve_tab, report_tab = st.tabs(
 )
 
 with overview_tab:
+    incomplete_products = [
+        key for key, value in selected_completeness.items() if value["status"] != "complete"
+    ]
+    if incomplete_products:
+        st.warning("合约数据不完整：" + "、".join(incomplete_products) + "。请先查看日报中的缺口说明。")
     overview = repository.query(
         "SELECT * FROM product_daily WHERE trade_date=? ORDER BY product", [selected_date]
     )
@@ -76,6 +88,10 @@ with overview_tab:
         """,
         [selected_date],
     )
+    if "completeness" in selected_stages or (
+        not selected_runs.empty and selected_runs.iloc[0]["status"] in {"failed", "running"}
+    ):
+        ai = ai.loc[ai["product"].isin(selected_stages.get("ai", {}).get("completed_products", []))]
     if not ai.empty:
         overview = overview.merge(ai, on="product", how="left")
     display_columns = [
@@ -170,6 +186,12 @@ with curve_tab:
         )
 
 with report_tab:
+    if selected_completeness:
+        st.subheader("所选交易日合约完整性")
+        st.dataframe(
+            [{"品种": key, **value} for key, value in selected_completeness.items()],
+            width="stretch", hide_index=True,
+        )
     st.subheader("运行健康度")
     health_col, coverage_col, trial_col = st.columns(3)
     health_col.metric("数据状态", health_labels[health["overall_status"]])

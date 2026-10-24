@@ -16,6 +16,7 @@ from quantview.ai.provider import AIUnavailable
 from quantview.analytics import build_analytics
 from quantview.config import Settings
 from quantview.data.adapters import AkshareEastmoneyAdapter, AkshareSinaAdapter, DataSourceError
+from quantview.data.completeness import assess_completeness
 from quantview.data.normalization import normalize_daily
 from quantview.data.raw_store import save_raw_snapshot
 from quantview.data.repository import Repository
@@ -40,11 +41,21 @@ def pipeline_lock(path: Path) -> Iterator[None]:
         path.unlink(missing_ok=True)
 
 
-def classify_run_status(rows_accepted: int, products_found: int, products_expected: int) -> str:
+def classify_run_status(
+    rows_accepted: int,
+    products_found: int,
+    products_expected: int,
+    *,
+    complete_products: int | None = None,
+) -> str:
     """Classify whether the target day's persisted dataset is usable."""
     if products_found == 0:
         return "failed"
-    if products_found < products_expected or rows_accepted == 0:
+    if (
+        products_found < products_expected
+        or rows_accepted == 0
+        or (complete_products is not None and complete_products < products_expected)
+    ):
         return "partial"
     return "success"
 
@@ -53,6 +64,7 @@ class DailyPipeline:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.repository = Repository(settings.database_path)
+        self.universe_sources: dict[str, str] = {}
         self.adapters = {
             "akshare_sina": AkshareSinaAdapter(),
             "akshare_em": AkshareEastmoneyAdapter(),
@@ -87,8 +99,10 @@ class DailyPipeline:
 
     def discover_instruments(self, target: date) -> list[Instrument]:
         instruments: list[Instrument] = []
+        self.universe_sources = {}
         for product, config in self.settings.products.items():
             contracts, live_discovery = self._candidate_contracts(product, target)
+            self.universe_sources[product] = "live_discovery" if live_discovery else "local_candidates"
             product_instruments: list[Instrument] = []
             for contract in contracts:
                 try:
@@ -120,16 +134,28 @@ class DailyPipeline:
         source_errors: list[dict],
     ) -> tuple[int, int, int]:
         priority = self.settings.app["data_sources"]["daily_priority"]
+        fetched = rejected_count = 0
+        stored_keys: set[tuple] = set()
         for source_name in priority:
             adapter = self.adapters[source_name]
             try:
                 result = adapter.fetch_daily(instrument.source_symbol, start, end)
+                fetched += len(result.frame)
                 if self.settings.app["data_sources"].get("save_raw_snapshots", True):
                     save_raw_snapshot(result, self.settings.path("raw"))
                 bars = normalize_daily(result, instrument)
                 accepted, rejected = validate_bars(bars)
-                self.repository.upsert_bars(accepted)
-                return len(result.frame), len(accepted), len(rejected)
+                rejected_count += len(rejected) + max(0, len(result.frame) - len(bars))
+                # Preserve valid primary-source history when the backup fills a gap.
+                new_bars = [
+                    bar for bar in accepted
+                    if (bar.trade_date, bar.instrument_id) not in stored_keys
+                ]
+                self.repository.upsert_bars(new_bars)
+                stored_keys.update((bar.trade_date, bar.instrument_id) for bar in new_bars)
+                if any(bar.trade_date == end for bar in accepted):
+                    return fetched, len(stored_keys), rejected_count
+                raise DataSourceError(f"No valid target-date bar for {end}; trying next source")
             except Exception as exc:
                 source_errors.append(
                     {
@@ -139,7 +165,7 @@ class DailyPipeline:
                         "error": str(exc),
                     }
                 )
-        return 0, 0, 0
+        return fetched, len(stored_keys), rejected_count
 
     def _rebuild_analytics(self) -> tuple[pd.DataFrame, pd.DataFrame]:
         daily = self.repository.query("SELECT * FROM futures_daily ORDER BY trade_date, instrument_id")
@@ -164,10 +190,19 @@ class DailyPipeline:
         product_daily: pd.DataFrame,
         spreads: pd.DataFrame,
         source_errors: list[dict],
-    ) -> int:
+        completeness: dict[str, dict],
+    ) -> list[str]:
         ai_config = self.settings.app.get("ai", {})
         if not ai_config.get("enabled", True):
-            return 0
+            return []
+        target_rows = product_daily.loc[
+            (pd.to_datetime(product_daily["trade_date"]).dt.date == target)
+            & product_daily["product"].isin(
+                [key for key, value in completeness.items() if value["status"] == "complete"]
+            )
+        ]
+        if target_rows.empty:
+            return []
         try:
             workflow = AIWorkflow(
                 self.settings.root,
@@ -175,10 +210,9 @@ class DailyPipeline:
                 timeout=float(ai_config.get("timeout_seconds", 90)),
             )
         except AIUnavailable:
-            return 0
-        target_rows = product_daily.loc[pd.to_datetime(product_daily["trade_date"]).dt.date == target]
+            return []
         target_spreads = spreads.loc[pd.to_datetime(spreads["trade_date"]).dt.date == target]
-        completed = 0
+        completed = []
         for _, row in target_rows.iterrows():
             product = row["product"]
             pack = build_evidence_pack(
@@ -186,11 +220,11 @@ class DailyPipeline:
                 product,
                 row,
                 target_spreads.loc[target_spreads["product"] == product],
-                {"status": "complete"},
+                completeness[product],
             )
             try:
                 self.repository.upsert_ai_analysis(workflow.run(pack))
-                completed += 1
+                completed.append(product)
             except Exception as exc:
                 source_errors.append({"product": product, "source": "ai", "error": str(exc)})
         return completed
@@ -223,6 +257,31 @@ class DailyPipeline:
                     "rejected": rejected,
                 }
                 self.repository.update_daily_changes()
+                target_bars = self.repository.query(
+                    """
+                    SELECT f.*, i.product, i.contract_code
+                    FROM futures_daily f JOIN instrument i USING (instrument_id)
+                    WHERE f.trade_date=?
+                    """,
+                    [target],
+                )
+                completeness = assess_completeness(
+                    target, instruments, target_bars, self.settings.products,
+                    min_contracts=int(
+                        self.settings.app.get("data_quality", {}).get("min_contracts_per_product", 2)
+                    ),
+                    universe_sources=self.universe_sources,
+                )
+                complete_count = sum(
+                    item["status"] == "complete" for item in completeness.values()
+                )
+                stages["completeness"] = {
+                    "status": (
+                        "success" if complete_count == len(self.settings.products)
+                        else "failed" if target_bars.empty else "partial"
+                    ),
+                    "products": completeness,
+                }
                 product_daily, spreads = self._rebuild_analytics()
                 target_products = product_daily.loc[
                     pd.to_datetime(product_daily["trade_date"]).dt.date == target
@@ -236,10 +295,20 @@ class DailyPipeline:
                     ),
                     "products": product_count,
                 }
-                ai_count = self._run_ai(target, product_daily, spreads, source_errors)
-                stages["ai"] = {"status": "success" if ai_count else "skipped", "products": ai_count}
+                ai_products = self._run_ai(
+                    target, product_daily, spreads, source_errors, completeness
+                )
+                stages["ai"] = {
+                    "status": "success" if ai_products else "skipped",
+                    "products": len(ai_products),
+                    "completed_products": ai_products,
+                    "blocked_products": [
+                        key for key, value in completeness.items() if value["status"] != "complete"
+                    ],
+                }
                 status = classify_run_status(
-                    accepted, product_count, len(self.settings.products)
+                    accepted, product_count, len(self.settings.products),
+                    complete_products=complete_count,
                 )
                 if status == "failed":
                     stages["report"] = {
@@ -252,6 +321,8 @@ class DailyPipeline:
                         "rows_accepted": accepted,
                         "rows_rejected": rejected,
                         "source_errors": source_errors,
+                        "completeness": completeness,
+                        "ai_products": ai_products,
                     }
                     output = render_daily_report(
                         self.repository, self.settings.root, target, run_meta

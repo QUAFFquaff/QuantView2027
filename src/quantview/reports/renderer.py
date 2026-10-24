@@ -63,6 +63,8 @@ def render_daily_report(
     ai_records = _parse_json_columns(
         _records(ai), ("bull_case", "bear_case", "key_evidence", "risk_flags", "invalidation_conditions")
     )
+    if "ai_products" in run_meta:
+        ai_records = [row for row in ai_records if row["product"] in run_meta["ai_products"]]
     ai_by_product = {row["product"]: row for row in ai_records}
     spreads_by_product: dict[str, list[dict]] = {}
     for row in spread_records:

@@ -22,6 +22,8 @@ quantview ui
 
 未配置 AI Key 时，行情、指标和 Markdown 日报仍会正常生成，只跳过 AI 章节。
 
+每日任务会核对目标日的已知合约覆盖：主源缺少有效当日行情时尝试备源；已知合约缺失或有效合约不足时标记 `partial`，跳过对应品种 AI，并在日报和工作台列出缺口与质量警告。最低合约数由 `config/app.yaml` 的 `data_quality.min_contracts_per_product` 配置，默认 2。完整性仅相对于本次发现或本地候选合约集合，不代表已核验交易所全量挂牌合约。
+
 ## 日常使用
 
 打开工作台：
@@ -53,5 +55,12 @@ quantview ui
 
 手工文件需包含 `contract_code`（或 `symbol`/`合约`/`合约代码`）以及日期、OHLC、成交量和持仓量字段；字段可使用系统标准英文名或 AKShare 常见中文名。
 
-完整架构和数据口径见 [开发设计文档](docs/DEVELOPMENT_DESIGN.md)。
+## 开发文档
+
+- [开发设计与当前实现基线](docs/DEVELOPMENT_DESIGN.md)：架构、数据口径、现有能力与待完善项。
+- [看板、邮件与复盘设计](docs/WORKBENCH_DESIGN.md)：页面、研究快照、纪律版本、决策记录、复盘及邮件契约。
+- [实施与验收计划](docs/IMPLEMENTATION_PLAN.md)：P0–P4 任务、依赖和验收场景。
+- [数据源说明](docs/DATA_SOURCES.md)：供应商字段与降级标记。
+
+下一版方向是“本地看板为主、邮件为辅、决策与复盘留痕”，暂缓微信小程序。邮件、不可变研究快照、纪律版本和个人记录目前仍是设计目标，尚未实现；本文上面的使用命令对应现有功能。
 

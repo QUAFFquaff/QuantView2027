@@ -17,6 +17,9 @@ data_sources:
     - akshare_em
   save_raw_snapshots: true
 
+data_quality:
+  min_contracts_per_product: 2
+
 ai:
   enabled: true
   provider: openai_compatible

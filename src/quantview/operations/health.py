@@ -73,7 +73,7 @@ def build_health_snapshot(
         repository.query(
             """
             SELECT target_trade_date, trigger_type, started_at, finished_at, status,
-                   rows_fetched, rows_accepted, rows_rejected, source_errors, report_path
+                   rows_fetched, rows_accepted, rows_rejected, source_errors, report_path, stages
             FROM pipeline_run ORDER BY started_at DESC LIMIT 1
             """
         )
@@ -88,6 +88,7 @@ def build_health_snapshot(
             else:
                 latest_run[key] = pd.to_datetime(value).isoformat()
         latest_run["source_errors"] = _json_value(latest_run.get("source_errors"), [])
+        latest_run["stages"] = _json_value(latest_run.get("stages"), {})
 
     trial_frame = repository.query(
         """
@@ -118,6 +119,8 @@ def build_health_snapshot(
         overall_status = "incomplete"
     elif latest_run is not None and latest_run.get("status") == "failed":
         overall_status = "failed"
+    elif latest_run is not None and latest_run.get("status") == "partial":
+        overall_status = "incomplete"
     elif business_days_behind is not None and business_days_behind > 1:
         overall_status = "stale"
     elif business_days_behind == 1:
