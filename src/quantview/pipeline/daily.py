@@ -23,6 +23,7 @@ from quantview.data.repository import Repository
 from quantview.data.validation import validate_bars
 from quantview.domain.models import Instrument
 from quantview.domain.rules import parse_contract_code
+from quantview.operations.calendar import load_calendar, resolve_target
 from quantview.reports import render_daily_report
 
 
@@ -229,12 +230,38 @@ class DailyPipeline:
                 source_errors.append({"product": product, "source": "ai", "error": str(exc)})
         return completed
 
-    def run(self, target: date, trigger_type: str = "manual") -> dict:
+    def run(
+        self,
+        target: date | None = None,
+        trigger_type: str = "manual",
+        *,
+        now: datetime | None = None,
+        allow_ai: bool | None = None,
+    ) -> dict:
+        calendar = load_calendar(self.repository, self.settings.calendar_exchange)
+        calendar_stage = resolve_target(
+            calendar, target, trigger_type=trigger_type, now=now,
+            ready_time=self.settings.scheduled_time,
+        )
+        if not calendar_stage["allowed"]:
+            return {
+                "run_id": None, "target_trade_date": calendar_stage["target_trade_date"],
+                "status": "skipped" if calendar_stage["skipped"] else "failed",
+                "stages": {"calendar": calendar_stage},
+                "rows_fetched": 0, "rows_accepted": 0, "rows_rejected": 0,
+                "source_errors": [] if calendar_stage["skipped"] else [
+                    {"source": "calendar", "error": calendar_stage["reason"]}
+                ],
+                "report_path": None,
+            }
+        target = date.fromisoformat(calendar_stage["target_trade_date"])
         self.initialize()
         run_id = uuid.uuid4().hex
         self.repository.start_run(run_id, target, trigger_type, __version__)
-        stages: dict[str, dict] = {}
+        stages: dict[str, dict] = {"calendar": calendar_stage}
         source_errors: list[dict] = []
+        if calendar_stage["status"] == "unknown":
+            source_errors.append({"source": "calendar", "error": calendar_stage["reason"]})
         fetched = accepted = rejected = 0
         report_path: str | None = None
         status = "failed"
@@ -295,21 +322,31 @@ class DailyPipeline:
                     ),
                     "products": product_count,
                 }
+                run_ai = (trigger_type != "backfill") if allow_ai is None else allow_ai
+                run_ai = run_ai and calendar_stage["status"] == "verified"
                 ai_products = self._run_ai(
                     target, product_daily, spreads, source_errors, completeness
-                )
+                ) if run_ai else []
                 stages["ai"] = {
                     "status": "success" if ai_products else "skipped",
                     "products": len(ai_products),
                     "completed_products": ai_products,
                     "blocked_products": [
-                        key for key, value in completeness.items() if value["status"] != "complete"
+                        key for key, value in completeness.items()
+                        if value["status"] != "complete" or calendar_stage["status"] != "verified"
                     ],
+                    "reason": (
+                        "日历未核验" if calendar_stage["status"] != "verified"
+                        else "历史补数默认不运行 AI" if trigger_type == "backfill" and not run_ai
+                        else "本次明确关闭 AI" if not run_ai else None
+                    ),
                 }
                 status = classify_run_status(
                     accepted, product_count, len(self.settings.products),
                     complete_products=complete_count,
                 )
+                if status == "success" and calendar_stage["status"] != "verified":
+                    status = "partial"
                 if status == "failed":
                     stages["report"] = {
                         "status": "skipped",
@@ -323,6 +360,7 @@ class DailyPipeline:
                         "source_errors": source_errors,
                         "completeness": completeness,
                         "ai_products": ai_products,
+                        "calendar": calendar_stage,
                     }
                     output = render_daily_report(
                         self.repository, self.settings.root, target, run_meta

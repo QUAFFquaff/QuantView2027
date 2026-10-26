@@ -4,6 +4,13 @@
 > 数据状态：{{ run.status }}｜接受 {{ run.rows_accepted }} 行｜拒绝 {{ run.rows_rejected }} 行  
 > 本报告仅用于个人研究，不构成投资建议；系统不具备下单能力。
 
+{% if run.get('calendar') %}
+交易日历状态：{{ run.calendar.status }}；目标交易日 {{ run.calendar.target_trade_date }}；上海检查时间 {{ run.calendar.as_of }}。
+{% if run.calendar.reason %}
+日历提示：{{ run.calendar.reason }}。本次不能确认交易日历完整性，AI 不运行。
+{% endif %}
+{% endif %}
+
 {% if run.get('completeness') %}
 ## 目标日合约完整性
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -11,7 +10,8 @@ import streamlit as st
 from quantview.config import load_settings
 from quantview.data.repository import Repository
 from quantview.operations import build_health_snapshot
-from quantview.pipeline import DailyPipeline
+from quantview.operations.calendar import load_calendar
+from quantview.ui.catch_up import render_calendar_controls
 
 st.set_page_config(page_title="QuantView2027", page_icon="📈", layout="wide")
 settings = load_settings(Path.cwd())
@@ -20,11 +20,8 @@ repository = Repository(settings.database_path)
 st.title("QuantView2027 农产品期货投研工作台")
 st.caption("本地只读研究界面｜LH 生猪・JD 鸡蛋・C 玉米｜不具备下单能力")
 
-if not settings.database_path.exists():
-    st.warning("数据库尚未创建。请先运行 `quantview init-db` 和 `quantview run-daily`。")
-    st.stop()
-
-health = build_health_snapshot(repository, settings.products, as_of=date.today())
+calendar = load_calendar(repository, settings.calendar_exchange)
+health = build_health_snapshot(repository, settings.products, calendar=calendar, ready_time=settings.scheduled_time)
 health_labels = {
     "healthy": "正常",
     "due": "待今日更新",
@@ -32,13 +29,24 @@ health_labels = {
     "incomplete": "数据不完整",
     "failed": "最近任务失败",
     "empty": "无数据",
+    "calendar_unknown": "日历无法确认",
 }
 st.sidebar.metric("运行状态", health_labels[health["overall_status"]])
-st.sidebar.caption("新鲜度按工作日估算，暂未扣除交易所节假日。")
+st.sidebar.caption("新鲜度按已核验交易日历计算。")
+render_calendar_controls(settings, health)
+
+if not settings.database_path.exists():
+    st.warning("数据库尚未创建。请先导入已核验日历，或明确指定日期手动生成带警告的日报。")
+    st.json(health)
+    st.stop()
 
 dates = repository.query("SELECT DISTINCT trade_date FROM product_daily ORDER BY trade_date DESC")
 if dates.empty:
-    st.warning("还没有可展示的分析数据。请先运行每日任务。")
+    st.warning("还没有可展示的分析数据。可以在侧栏明确触发补跑。")
+    st.subheader("系统状态")
+    st.json(health)
+    runs = repository.query("SELECT * FROM pipeline_run ORDER BY started_at DESC LIMIT 20")
+    st.dataframe(runs, width="stretch", hide_index=True)
     st.stop()
 
 available_dates = pd.to_datetime(dates["trade_date"]).dt.date.tolist()
@@ -50,22 +58,7 @@ selected_runs = repository.query(
 selected_stages = json.loads(selected_runs.iloc[0]["stages"]) if not selected_runs.empty else {}
 selected_completeness = selected_stages.get("completeness", {}).get("products", {})
 latest_date = available_dates[0]
-today = date.today()
 st.sidebar.caption(f"数据库最新交易日：{latest_date}")
-if today.weekday() < 5 and latest_date < today:
-    st.sidebar.warning(f"可能缺少 {today} 的日终数据。")
-if st.sidebar.button("检查并补跑今天", type="primary"):
-    with st.sidebar.status("正在更新日行情并生成日报……", expanded=True) as status_box:
-        result = DailyPipeline(settings).run(today, trigger_type="catch_up")
-        status_box.write(f"任务状态：{result['status']}")
-        status_box.write(f"接受数据：{result['rows_accepted']} 行")
-        if result["source_errors"]:
-            status_box.write(result["source_errors"])
-        status_box.update(
-            label="更新完成" if result["status"] != "failed" else "更新失败",
-            state="complete" if result["status"] != "failed" else "error",
-        )
-    st.rerun()
 overview_tab, product_tab, curve_tab, report_tab = st.tabs(
     ["今日总览", "品种研究", "期限结构", "日报与系统状态"]
 )
@@ -205,10 +198,10 @@ with report_tab:
     )
     if health["coverage"]["missing"]:
         st.error("缺少品种：" + "、".join(health["coverage"]["missing"]))
-    if health["business_days_behind"] is not None and health["business_days_behind"] > 1:
+    if health["trading_days_behind"] is not None and health["trading_days_behind"] > 1:
         st.warning(
             f"最新行情日为 {health['latest_market_date']}，"
-            f"按工作日估算滞后 {health['business_days_behind']} 日。"
+            f"按已核验日历滞后 {health['trading_days_behind']} 个交易日。"
         )
     latest_run = health["latest_run"]
     if latest_run and latest_run["source_errors"]:

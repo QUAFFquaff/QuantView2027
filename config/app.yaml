@@ -1,3 +1,9 @@
+runtime:
+  timezone: Asia/Shanghai
+
+calendar:
+  exchange: DCE
+
 paths:
   database: data/warehouse/quantview.duckdb
   raw: data/raw

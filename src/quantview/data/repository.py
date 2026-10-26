@@ -12,6 +12,26 @@ import pandas as pd
 from quantview.domain.models import DailyBar, Instrument
 
 SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS calendar_import (
+    import_id VARCHAR PRIMARY KEY,
+    exchange VARCHAR NOT NULL,
+    source VARCHAR NOT NULL,
+    source_version VARCHAR NOT NULL,
+    verified_at TIMESTAMPTZ NOT NULL,
+    coverage_start DATE NOT NULL,
+    coverage_end DATE NOT NULL,
+    file_hash VARCHAR NOT NULL,
+    row_count INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS exchange_calendar (
+    exchange VARCHAR NOT NULL,
+    trade_date DATE NOT NULL,
+    is_trading_day BOOLEAN NOT NULL,
+    import_id VARCHAR NOT NULL REFERENCES calendar_import(import_id),
+    PRIMARY KEY (exchange, trade_date)
+);
+
 CREATE TABLE IF NOT EXISTS instrument (
     instrument_id VARCHAR PRIMARY KEY,
     exchange VARCHAR NOT NULL,

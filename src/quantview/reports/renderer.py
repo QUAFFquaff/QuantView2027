@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from quantview.data.repository import Repository
+from quantview.operations.clock import shanghai_now
 
 
 def _clean(value):
@@ -83,7 +84,7 @@ def render_daily_report(
     template = environment.get_template("daily_report.md.j2")
     content = template.render(
         trade_date=trade_date,
-        generated_at=datetime.now().astimezone(),
+        generated_at=shanghai_now(),
         products=product_records,
         spreads_by_product=spreads_by_product,
         ai_by_product=ai_by_product,

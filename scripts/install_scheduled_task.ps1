@@ -6,19 +6,23 @@ param(
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $PythonPath = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 
+if ([TimeZoneInfo]::Local.Id -ne "China Standard Time") {
+    throw "This installer requires the Windows China Standard Time zone (Asia/Shanghai). No task was installed."
+}
+
 if (-not (Test-Path -LiteralPath $PythonPath)) {
     throw "Project Python environment not found: $PythonPath"
 }
 
-$TimeParts = $RunAt.Split(":")
-if ($TimeParts.Count -ne 2) {
+if ($RunAt -notmatch '^([01][0-9]|2[0-3]):[0-5][0-9]$') {
     throw "RunAt must use HH:mm format"
 }
+$TimeParts = $RunAt.Split(":")
 
 $StartTime = (Get-Date).Date.AddHours([int]$TimeParts[0]).AddMinutes([int]$TimeParts[1])
 $Action = New-ScheduledTaskAction `
     -Execute $PythonPath `
-    -Argument "-m quantview run-daily" `
+    -Argument "-m quantview run-daily --trigger scheduled" `
     -WorkingDirectory $ProjectRoot
 $Trigger = New-ScheduledTaskTrigger `
     -Weekly `

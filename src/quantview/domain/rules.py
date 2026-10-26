@@ -4,6 +4,7 @@ import re
 from datetime import date
 
 from quantview.domain.models import Instrument
+from quantview.operations.clock import shanghai_now
 
 CONTRACT_PATTERN = re.compile(r"^([A-Za-z]+)(\d{3,4})$")
 
@@ -33,7 +34,7 @@ def parse_contract_code(
     if len(suffix) == 4:
         year = 2000 + int(suffix[:2])
     else:
-        ref_year = (reference_date or date.today()).year
+        ref_year = (reference_date or shanghai_now().date()).year
         decade = (ref_year // 10) * 10
         candidates = [decade - 10 + int(suffix[0]), decade + int(suffix[0]), decade + 10 + int(suffix[0])]
         year = min(candidates, key=lambda value: abs(value - ref_year))

@@ -12,6 +12,8 @@ from quantview.ai.provider import AIUnavailable
 from quantview.config import Settings
 from quantview.data.adapters import DataSourceError
 from quantview.domain.models import FetchResult
+from quantview.operations.calendar import import_calendar
+from quantview.operations.clock import SHANGHAI
 from quantview.operations.health import build_health_snapshot
 from quantview.pipeline.daily import DailyPipeline
 
@@ -75,6 +77,12 @@ def pipeline(tmp_path):
     )
     backup = FakeAdapter("backup", contracts, {})
     pipeline.adapters = {"akshare_sina": primary, "primary": primary, "backup": backup}
+    calendar_file = tmp_path / "calendar.csv"
+    calendar_file.write_text("trade_date,is_trading_day\n2026-10-23,1\n", encoding="utf-8")
+    import_calendar(
+        pipeline.repository, calendar_file, source="synthetic regression fixture",
+        source_version="v1", verified=True,
+    )
     return pipeline
 
 
@@ -246,3 +254,67 @@ def test_failed_discovery_cannot_redefine_local_candidate_set_as_complete(pipeli
         assert quality["universe_source"] == "local_candidates"
     assert result["stages"]["ai"]["blocked_products"] == ["C", "JD", "LH"]
     assert "contract_universe_unverified" in Path(result["report_path"]).read_text(encoding="utf-8")
+
+
+def test_unverified_manual_date_is_partial_and_blocks_ai(pipeline, monkeypatch):
+    with pipeline.repository.connect() as connection:
+        connection.execute("DELETE FROM exchange_calendar")
+
+    def forbidden(*args):
+        raise AssertionError("AI must not run without a verified calendar")
+
+    monkeypatch.setattr(pipeline, "_run_ai", forbidden)
+    result = pipeline.run(TARGET)
+    assert result["status"] == "partial", result
+    assert result["stages"]["calendar"]["status"] == "unknown"
+    assert result["stages"]["ai"]["blocked_products"] == ["C", "JD", "LH"]
+    assert "日历缺失或目标日期不在已核验覆盖范围内" in Path(result["report_path"]).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(("target", "trigger", "now", "expected_status"), [
+    (None, "scheduled", datetime(2026, 10, 26, 19, tzinfo=SHANGHAI), "failed"),
+    (TARGET, "manual", datetime(2026, 10, 23, 10, tzinfo=SHANGHAI), "failed"),
+    (date(2026, 10, 27), "manual", datetime(2026, 10, 26, 19, tzinfo=SHANGHAI), "failed"),
+])
+def test_blocked_target_does_not_fetch_or_create_run(pipeline, target, trigger, now, expected_status):
+    result = pipeline.run(target, trigger_type=trigger, now=now)
+    assert result["status"] == expected_status
+    assert result["run_id"] is None
+    assert not pipeline.adapters["primary"].calls
+    assert pipeline.repository.query("SELECT * FROM pipeline_run").empty
+
+
+def test_closed_day_is_skipped_without_fetch(pipeline):
+    source = pipeline.settings.root / "calendar.csv"
+    source.write_text("trade_date,is_trading_day\n2026-10-24,0\n", encoding="utf-8")
+    import_calendar(pipeline.repository, source, source="fixture", source_version="closed", verified=True)
+    result = pipeline.run(date(2026, 10, 24), now=datetime(2026, 10, 26, 19, tzinfo=SHANGHAI))
+    assert result["status"] == "skipped"
+    assert not pipeline.adapters["primary"].calls
+    assert pipeline.repository.query("SELECT * FROM pipeline_run").empty
+
+
+def test_default_target_uses_verified_previous_day_before_cutoff(pipeline):
+    source = pipeline.settings.root / "calendar.csv"
+    source.write_text(
+        "trade_date,is_trading_day\n2026-10-23,1\n2026-10-24,0\n2026-10-25,0\n2026-10-26,1\n",
+        encoding="utf-8",
+    )
+    import_calendar(pipeline.repository, source, source="fixture", source_version="weekend", verified=True)
+    result = pipeline.run(now=datetime(2026, 10, 26, 10, tzinfo=SHANGHAI))
+    assert result["status"] == "success", result
+    assert result["target_trade_date"] == "2026-10-23"
+
+
+def test_backfill_default_skips_ai_and_explicit_opt_in_is_honored(pipeline, monkeypatch):
+    calls = []
+
+    def spy(*args):
+        calls.append(True)
+        return []
+
+    monkeypatch.setattr(pipeline, "_run_ai", spy)
+    assert pipeline.run(TARGET, trigger_type="backfill")["status"] == "success"
+    assert not calls
+    assert pipeline.run(TARGET, trigger_type="backfill", allow_ai=True)["status"] == "success"
+    assert calls == [True]
