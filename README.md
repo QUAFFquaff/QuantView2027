@@ -80,7 +80,8 @@ quantview ui
 
 - [开发设计与当前实现基线](docs/DEVELOPMENT_DESIGN.md)：架构、数据口径、现有能力与待完善项。
 - [看板、邮件与复盘设计](docs/WORKBENCH_DESIGN.md)：页面、研究快照、纪律版本、决策记录、复盘及邮件契约。
-- [实施与验收计划](docs/IMPLEMENTATION_PLAN.md)：P0–P4 任务、依赖和验收场景。
+- [场内 ETF 持仓与复盘设计](docs/ETF_PORTFOLIO_DESIGN.md)：持仓起点、成交／资金导入、对账、收益口径与 ETF 后续开发顺序；目前为设计，尚未实现。
+- [实施与验收计划](docs/IMPLEMENTATION_PLAN.md)：P0–P4 公共任务及 E0–E5 ETF 扩展、依赖和验收场景。
 - [数据源说明](docs/DATA_SOURCES.md)：供应商字段与降级标记。
 - [10 月 26 日进度与验收](docs/PROGRESS_2026-10-26.md)：日历、选日、补跑及本轮边界。
 
