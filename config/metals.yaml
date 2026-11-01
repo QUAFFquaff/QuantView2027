@@ -1,0 +1,7 @@
+# 公开市场观察；不代表个人持仓。基金自选通过页面保存到本地缓存。
+lookback_days: 400
+timeout_seconds: 40
+stale_after_calendar_days: 7
+benchmarks:
+  - Au99.99
+  - Ag99.99

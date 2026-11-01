@@ -22,12 +22,12 @@ LABELS = {
 }
 UNITS = {"LH": "元/吨", "JD": "元/500千克", "C": "元/吨"}
 CSS = """<style>
-.stApp { background: #f5f7fa; }
+.stApp { background: var(--background-color, #f5f7fa); }
 .block-container { padding-top: 4.5rem; max-width: 1440px; }
-h1, h2, h3 { color: #172e42; letter-spacing: -.025em; }
-[data-testid="stSidebar"] { background: #edf2f5; }
-[data-testid="stMetricValue"] { color: #173d50; }
-[data-testid="stVerticalBlockBorderWrapper"] > div { background: #fff; border-radius: 14px; }
+h1, h2, h3 { color: var(--text-color, #172e42); letter-spacing: -.025em; }
+[data-testid="stSidebar"] { background: var(--secondary-background-color, #edf2f5); }
+[data-testid="stMetricValue"] { color: var(--text-color, #173d50); }
+[data-testid="stVerticalBlockBorderWrapper"] > div { border-radius: 14px; }
 [data-testid="stTabs"] button { font-weight: 600; }
 @media (max-width: 640px) {
  .block-container { padding: 4.5rem 1rem 1rem; }
@@ -273,6 +273,17 @@ def render():
     st.set_page_config(page_title="QuantView2027 · 研究看板", page_icon="🌾", layout="wide")
     st.markdown(CSS, unsafe_allow_html=True)
     settings = config.load_settings(Path.cwd())
+    st.sidebar.title("QuantView2027")
+    workspace = st.sidebar.radio("工作台", ["农产品期货", "贵金属"], key="workspace")
+    if workspace == "贵金属":
+        from quantview.metals.models import load_metals_settings
+        from quantview.ui.metals import render_metals
+
+        try:
+            render_metals(load_metals_settings(settings.root))
+        except (ValueError, OSError) as exc:
+            st.error(f"贵金属工作台暂不可用：{exc}")
+        return
     repository = Repository(settings.database_path)
     queries = WorkbenchQueries(repository)
     calendar = load_calendar(repository, settings.calendar_exchange)
@@ -280,7 +291,6 @@ def render():
     st.caption("QUANTVIEW / AGRICULTURAL FUTURES")
     st.title("农产品期货研究看板")
     st.caption("生猪 · 鸡蛋 · 玉米 / 日频行情、期限结构与研究证据")
-    st.sidebar.title("QuantView2027")
     st.sidebar.metric("运行状态", LABELS[health["overall_status"]])
     if st.sidebar.button("刷新本地数据", key="refresh_local"):
         st.rerun()

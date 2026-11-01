@@ -67,6 +67,8 @@ def build_parser() -> argparse.ArgumentParser:
     catch_up.add_argument("--all", action="store_true", help="Explicitly rerun the whole displayed missing interval")
     manual = commands.add_parser("import-file", help="Import a CSV or Excel fallback data file")
     manual.add_argument("path")
+    metals = commands.add_parser("metals", help="Public precious-metal observations; independent of DCE calendars")
+    metals.add_argument("action", choices=("sync", "status"))
     ui = commands.add_parser("ui", help="Open the local Streamlit workbench")
     ui.add_argument("--port", type=int, default=8501)
     return parser
@@ -76,6 +78,14 @@ def _execute(args: argparse.Namespace) -> int:
     if args.command == "doctor":
         return _doctor()
     settings = load_settings()
+    if args.command == "metals":
+        from quantview.metals.models import load_metals_settings
+        from quantview.metals.service import MetalsService
+
+        service = MetalsService(load_metals_settings(settings.root))
+        result = service.sync() if args.action == "sync" else service.status()
+        _print(result)
+        return 0 if args.action == "status" or result["status"] == "success" else 1
     repository = Repository(settings.database_path)
     calendar = load_calendar(repository, settings.calendar_exchange)
     if args.command == "status":

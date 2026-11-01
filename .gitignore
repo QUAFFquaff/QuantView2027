@@ -10,6 +10,7 @@ htmlcov/
 data/raw/
 data/warehouse/*.duckdb*
 data/exports/
+data/market/metals/
 reports/daily/
 logs/
 *.log
