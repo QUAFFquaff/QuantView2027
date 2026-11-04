@@ -15,3 +15,6 @@ reports/daily/
 logs/
 *.log
 
+/Assets/
+/data/portfolio/
+.DS_Store

@@ -126,6 +126,25 @@ class MetalsService:
         with _lock(self.root):
             _atomic(self.root / "watchlist.json", {"schema_version": 1, "saved_at": shanghai_now().isoformat(), "funds": rows})
 
+    def append_watchlist(self, additions: list[dict]) -> list[str]:
+        """Add missing codes without replacing a user's saved classifications."""
+        candidates = [fund_asset(row["code"], row["kind"], row["metal"]) for row in additions]
+        with _lock(self.root):
+            assets = self.watchlist()
+            known = {asset.asset_id for asset in assets}
+            added = []
+            for asset in candidates:
+                if asset.asset_id not in known:
+                    assets.append(asset)
+                    known.add(asset.asset_id)
+                    added.append(asset.symbol)
+            if len(assets) > 10:
+                raise ValueError("追加后超过 10 只自选，未修改清单；请先在贵金属页调整自选。")
+            if added:
+                rows = [{"code": asset.symbol, "kind": asset.kind, "metal": asset.metal} for asset in assets]
+                _atomic(self.root / "watchlist.json", {"schema_version": 1, "saved_at": shanghai_now().isoformat(), "funds": rows})
+        return added
+
     def assets(self) -> list[MetalAsset]:
         return [BENCHMARKS[symbol] for symbol in self.settings.benchmarks] + self.watchlist()
 
@@ -152,7 +171,7 @@ class MetalsService:
             raise ValueError("本地采集状态格式损坏。")
         return value
 
-    def sync(self, *, fetcher=None, now: datetime | None = None, on_progress=None) -> dict:
+    def sync(self, *, fetcher=None, now: datetime | None = None, on_progress=None, funds_only: bool = False) -> dict:
         fixed_clock = now is not None
         now = now or shanghai_now()
         if now.tzinfo is None:
@@ -161,7 +180,10 @@ class MetalsService:
         fetcher = fetcher or fetch_in_worker
         results = []
         with _lock(self.root):
-            for asset in self.assets():
+            assets = self.watchlist() if funds_only else self.assets()
+            if not assets:
+                return {"status": "skipped", "reason": "没有已保存的基金自选", "results": []}
+            for asset in assets:
                 if on_progress:
                     on_progress(asset)
                 attempt = {"asset_id": asset.asset_id, "attempted_at": now.isoformat()}

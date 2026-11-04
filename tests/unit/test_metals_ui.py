@@ -67,3 +67,33 @@ def test_explicit_update_shows_dated_quotes_and_failure_keeps_old_price(tmp_path
     assert not app.exception
     assert any(item.value == "850.000" for item in app.metric)
     assert any("synthetic outage" in item.value for item in app.warning)
+
+
+def test_fund_page_appends_without_overwriting_and_explicitly_updates_only_funds(tmp_path, monkeypatch):
+    setup(tmp_path, monkeypatch)
+    service = MetalsService(MetalsSettings(tmp_path))
+    service.save_watchlist([{"code": "518880", "kind": "ETF", "metal": "unknown"}])
+    calls = []
+
+    def fetch(asset, *args):
+        calls.append(asset.symbol)
+        return {
+            "endpoint": "test fixture",
+            "verification": {"status": "provider_category_verified", "category": asset.kind, "name": asset.symbol},
+            "rows": [{"date": "2026-10-30", "close": 1.25}],
+        }
+
+    monkeypatch.setattr("quantview.metals.service.fetch_in_worker", fetch)
+    app = AppTest.from_file(str(APP), default_timeout=30).run()
+    app.radio(key="workspace").set_value("基金价格与暴露").run()
+    assert not app.exception
+    assert not calls
+    app.button(key="funds_add_starters").click().run()
+    assert not app.exception
+    assert len(service.watchlist()) == 7
+    assert service.watchlist()[0].metal == "unknown"
+    assert not calls
+    app.button(key="funds_sync").click().run()
+    assert not app.exception
+    assert calls == [asset.symbol for asset in service.watchlist()]
+    assert all(service.latest(asset)["quotes"][-1]["close"] == 1.25 for asset in service.watchlist())

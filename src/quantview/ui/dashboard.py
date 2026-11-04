@@ -274,7 +274,16 @@ def render():
     st.markdown(CSS, unsafe_allow_html=True)
     settings = config.load_settings(Path.cwd())
     st.sidebar.title("QuantView2027")
-    workspace = st.sidebar.radio("工作台", ["农产品期货", "贵金属"], key="workspace")
+    workspace = st.sidebar.radio("工作台", ["农产品期货", "贵金属", "基金价格与暴露"], key="workspace")
+    if workspace == "基金价格与暴露":
+        from quantview.metals.models import load_metals_settings
+        from quantview.ui.funds import render_funds
+
+        try:
+            render_funds(load_metals_settings(settings.root))
+        except (ValueError, OSError) as exc:
+            st.error(f"基金看板暂不可用：{exc}")
+        return
     if workspace == "贵金属":
         from quantview.metals.models import load_metals_settings
         from quantview.ui.metals import render_metals
