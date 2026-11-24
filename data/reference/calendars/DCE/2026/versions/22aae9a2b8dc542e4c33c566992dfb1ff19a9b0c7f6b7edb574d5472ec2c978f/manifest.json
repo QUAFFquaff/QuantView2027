@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "exchange": "DCE",
+  "year": 2026,
+  "provider": "Markets Open (marketsopen.today)",
+  "source_url": "https://marketsopen.today/data/china-exchange-holidays-2026.json",
+  "data_version": "2026.10.22-rc.1",
+  "license": "CC-BY-4.0",
+  "attribution": "Markets Open (https://marketsopen.today) — data_version 2026.10.22-rc.1",
+  "coverage_start": "2026-01-01",
+  "coverage_end": "2026-12-31",
+  "calendar_days": 365,
+  "trading_days": 242,
+  "holidays": [
+    {
+      "name": "元旦",
+      "start": "2026-01-01",
+      "end": "2026-01-04",
+      "reopens_on": "2026-01-05",
+      "notice_url": "http://www.dce.com.cn/dce/content/2025/ywggytz/18625615.html",
+      "source_checked_at": "2026-10-22"
+    },
+    {
+      "name": "春节",
+      "start": "2026-02-14",
+      "end": "2026-02-23",
+      "reopens_on": "2026-02-24",
+      "notice_url": "http://www.dce.com.cn/dce/content/2025/ywggytz/18625615.html",
+      "source_checked_at": "2026-10-22"
+    },
+    {
+      "name": "清明节",
+      "start": "2026-04-04",
+      "end": "2026-04-06",
+      "reopens_on": "2026-04-07",
+      "notice_url": "http://www.dce.com.cn/dce/content/2025/ywggytz/18625615.html",
+      "source_checked_at": "2026-10-22"
+    },
+    {
+      "name": "劳动节",
+      "start": "2026-05-01",
+      "end": "2026-05-05",
+      "reopens_on": "2026-05-06",
+      "notice_url": "http://www.dce.com.cn/dce/content/2025/ywggytz/18625615.html",
+      "source_checked_at": "2026-10-22"
+    },
+    {
+      "name": "端午节",
+      "start": "2026-06-19",
+      "end": "2026-06-21",
+      "reopens_on": "2026-06-22",
+      "notice_url": "http://www.dce.com.cn/dce/content/2025/ywggytz/18625615.html",
+      "source_checked_at": "2026-10-22"
+    },
+    {
+      "name": "中秋节",
+      "start": "2026-09-25",
+      "end": "2026-09-27",
+      "reopens_on": "2026-09-28",
+      "notice_url": "http://www.dce.com.cn/dce/content/2025/ywggytz/18625615.html",
+      "source_checked_at": "2026-10-22"
+    },
+    {
+      "name": "国庆节",
+      "start": "2026-10-01",
+      "end": "2026-10-07",
+      "reopens_on": "2026-10-08",
+      "notice_url": "http://www.dce.com.cn/dce/content/2025/ywggytz/18625615.html",
+      "source_checked_at": "2026-10-22"
+    }
+  ],
+  "source_sha256": "22aae9a2b8dc542e4c33c566992dfb1ff19a9b0c7f6b7edb574d5472ec2c978f",
+  "csv_sha256": "6511c7d93cabdab1d5e38eb994c5570a068dacfa36ac98bf9066065451efee58",
+  "basis": "annual_exchange_holidays_and_weekends",
+  "scope": "daily_calendar_only",
+  "fetched_at": "2026-11-24T14:45:55.837999+08:00"
+}

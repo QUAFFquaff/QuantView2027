@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date, datetime
@@ -169,7 +171,22 @@ class Repository:
 
     @contextmanager
     def connect(self, *, read_only: bool = False) -> Iterator[duckdb.DuckDBPyConnection]:
-        connection = duckdb.connect(str(self.path), read_only=read_only)
+        # Windows can briefly retain a file handle after a connection closes.
+        # Retry opening only; never replay a transaction or mask permission errors.
+        for attempt, delay in enumerate((0, 0.05, 0.1, 0.2, 0.4)):
+            if delay:
+                time.sleep(delay)
+            try:
+                connection = duckdb.connect(str(self.path), read_only=read_only)
+                break
+            except duckdb.IOException as exc:
+                message = str(exc).casefold()
+                sharing = any(marker in message for marker in (
+                    "being used by another process", "sharing violation", "winerror 32",
+                    "另一个程序正在使用此文件", "另一进程正在使用此文件",
+                ))
+                if os.name != "nt" or not sharing or attempt == 4:
+                    raise
         try:
             yield connection
         finally:

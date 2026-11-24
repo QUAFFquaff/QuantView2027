@@ -81,9 +81,10 @@ def build_health_snapshot(
         tables = repository.query("SELECT table_name FROM information_schema.tables WHERE table_schema='main'")
         exists = "product_daily" in set(tables["table_name"])
     target_limit = expected_date or instant.date()
-    market_dates = repository.query(
-        "SELECT DISTINCT trade_date FROM product_daily WHERE trade_date<=? ORDER BY trade_date", [target_limit]
+    market_rows = repository.query(
+        "SELECT trade_date, product FROM product_daily WHERE trade_date<=? ORDER BY trade_date, product", [target_limit]
     ) if exists else pd.DataFrame()
+    market_dates = market_rows[["trade_date"]].drop_duplicates() if not market_rows.empty else pd.DataFrame()
     latest_date = pd.to_datetime(market_dates.iloc[-1]["trade_date"]).date() if not market_dates.empty else None
     coverage_frame = repository.query(
         "SELECT product, main_contract, second_contract, main_changed FROM product_daily WHERE trade_date=? ORDER BY product",
@@ -119,6 +120,9 @@ def build_health_snapshot(
     latest_complete = max(complete_dates) if complete_dates else None
     days_behind = None
     missing_dates: list[str] = []
+    history = {"start": None, "end": expected_date.isoformat() if expected_date else None,
+               "checked_trading_days": None, "summary_missing_dates": [], "summary_missing_details": [],
+               "summary_missing_count": None, "run_pending_dates": [], "run_pending_count": None}
     planning_note = None
     if expected_date:
         try:
@@ -128,7 +132,20 @@ def build_health_snapshot(
             observed = [pd.to_datetime(value).date() for value in market_dates.get("trade_date", [])]
             observed.extend(target for target in by_date if target <= expected_date)
             start = max(min(observed), min(calendar.days)) if observed else expected_date
-            missing_dates = [day.isoformat() for day in calendar.trading_days(start, expected_date) if day not in complete_dates]
+            checked = calendar.trading_days(start, expected_date)
+            missing_dates = [day.isoformat() for day in checked if day not in complete_dates]
+            products_by_date: dict[date, set[str]] = {}
+            for row in market_rows.to_dict("records"):
+                day = pd.Timestamp(row["trade_date"]).date()
+                products_by_date.setdefault(day, set()).add(str(row["product"]))
+            summary_missing = [{"trade_date": day.isoformat(), "missing_products": sorted(set(expected) - products_by_date.get(day, set()))}
+                               for day in checked if set(expected) - products_by_date.get(day, set())]
+            summary_missing_dates = [row["trade_date"] for row in summary_missing]
+            run_pending = [day for day in missing_dates if day not in set(summary_missing_dates)]
+            history.update(start=start.isoformat(), checked_trading_days=len(checked),
+                           summary_missing_dates=summary_missing_dates, summary_missing_details=summary_missing,
+                           summary_missing_count=len(summary_missing_dates), run_pending_dates=run_pending,
+                           run_pending_count=len(run_pending))
         except CalendarUnavailable as exc:
             planning_note = str(exc)
 
@@ -177,7 +194,9 @@ def build_health_snapshot(
         "catch_up": {"missing_dates": missing_dates, "count": len(missing_dates),
                      "latest_missing_date": missing_dates[-1] if missing_dates else None,
                      "available": expected_date is not None and planning_note is None,
-                     "reason": planning_note or calendar_state.get("reason")},
+                     "reason": planning_note or calendar_state.get("reason"),
+                     "basis": "日终运行核验与发布记录，不能等同于行情数据缺失"},
+        "history": history,
         "trial": {"target_days": trial_days, "completed_days": len(successful_dates),
                   "successful_dates": successful_dates, "passed": len(successful_dates) >= trial_days,
                   "note": "按已核验日历连续计数，排除历史回填及事后生成；尚不代表快照、自动运行及真实行情全部验收通过"},

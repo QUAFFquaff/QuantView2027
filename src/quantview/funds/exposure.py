@@ -1,6 +1,7 @@
 """Point-in-time, partial look-through from locally imported data."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import date, datetime
@@ -20,7 +21,7 @@ TEMPLATE = {
     "positions": [{"code": "560860", "market_value_cny": 500}],
     "disclosures": [],
 }
-MAX_BYTES = 1_000_000
+MAX_BYTES = 1024 * 1024
 
 
 def _object(value, keys: set[str], label: str) -> dict:
@@ -139,11 +140,43 @@ def exposure_path(root: Path) -> Path:
     return root / "data" / "portfolio" / "fund_exposure.json"
 
 
-def save_bundle(root: Path, raw: bytes) -> None:
+def bundle_revision(bundle: dict | None) -> str:
+    canonical = json.dumps(bundle, ensure_ascii=False, sort_keys=True, allow_nan=False)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def save_bundle(root: Path, raw: bytes, *, expected_revision: str | None = None) -> None:
     bundle = parse_bundle(raw)
     path = exposure_path(root)
     with _lock(path.parent):
+        current = load_bundle(root)
+        if expected_revision is not None and bundle_revision(current) != expected_revision:
+            raise ValueError("快照已被其他操作修改，请重新预览后保存。")
+        if current == bundle:
+            return
+        # Archive the previous published copy first. The current copy is also
+        # included by bundle_history, so a failed publish cannot expose a draft.
+        for version in (current,):
+            if version is not None:
+                destination = path.parent / "fund_exposure_versions" / f"{bundle_revision(version)}.json"
+                if not destination.exists():
+                    _atomic(destination, version)
         _atomic(path, bundle)
+
+
+def bundle_history(root: Path) -> list[dict]:
+    directory = exposure_path(root).parent / "fund_exposure_versions"
+    result = {}
+    for path in directory.glob("*.json"):
+        bundle = parse_bundle(path.read_bytes())
+        if bundle_revision(bundle) != path.stem:
+            raise ValueError("历史快照校验失败，未展示损坏的版本。")
+        result[path.stem] = {"revision": path.stem, "bundle": bundle}
+    current = load_bundle(root)
+    if current is not None:
+        revision = bundle_revision(current)
+        result[revision] = {"revision": revision, "bundle": current}
+    return sorted(result.values(), key=lambda item: datetime.fromisoformat(item["bundle"]["as_of"]), reverse=True)
 
 
 def load_bundle(root: Path) -> dict | None:

@@ -84,3 +84,67 @@ def test_ui_range_preflight_rejects_uncovered_dates_without_starting_pipeline(ui
     assert not app.exception
     assert not calls
     assert any("未覆盖" in item.value for item in app.error)
+
+
+def seed_current_with_old_audit_gaps(settings):
+    import pandas as pd
+
+    source = settings.root / "calendar.csv"
+    source.write_text("trade_date,is_trading_day\n" + "".join(
+        f"2026-10-{day},{int(day < 24 or day == 26)}\n" for day in range(20, 27)
+    ), encoding="utf-8")
+    repository = Repository(settings.database_path)
+    import_calendar(repository, source, source="synthetic UI fixture", source_version="v1", verified=True)
+    rows = [{"trade_date": date(2026, 10, day), "product": product, "main_contract": f"{product}2701", "main_settlement": 100}
+            for day in range(20, 24) for product in settings.products]
+    repository.replace_frame("product_daily", pd.DataFrame(rows), "trade_date", [date(2026, 10, day) for day in range(20, 24)])
+    repository.start_run("latest", date(2026, 10, 23), "manual", "fixture")
+    repository.finish_run("latest", status="success", stages={"calendar": {"status": "verified"},
+                                                             "completeness": {"products": {p: {"status": "complete"} for p in settings.products}}},
+                          rows_fetched=3, rows_accepted=3, rows_rejected=0, source_errors=[], report_path="fixture.md")
+
+
+def test_latest_update_never_backtracks_into_older_unverified_history(ui_setup):
+    settings, calls = ui_setup
+    seed_current_with_old_audit_gaps(settings)
+    app = AppTest.from_file(str(APP), default_timeout=30).run()
+    assert not app.exception and not calls
+    assert any("最新已就绪行情已更新至 2026-10-23" in item.value for item in app.success)
+    assert any("18:10" in item.value and "此前展示" in item.value for item in app.caption)
+    assert "2026-10-23" in app.button(key="futures_update_latest").label
+    assert "2026-10-22" in app.button(key="catch_up_latest").label
+    assert not any("已发现 3 个缺失" in item.value for item in app.caption)
+    app.button(key="futures_update_latest").click().run()
+    assert not app.exception
+    assert calls == [(date(2026, 10, 23), {"trigger_type": "catch_up", "allow_ai": False})]
+    # Historical rebuild is still available explicitly and names its date.
+    app.button(key="catch_up_latest").click().run()
+    assert calls[-1][0] == date(2026, 10, 22)
+    app.button(key="futures_update_latest").click().run()
+    assert calls[-1][0] == date(2026, 10, 23)
+
+
+def test_latest_update_selects_today_after_cutoff_even_with_historical_gaps(ui_setup, monkeypatch):
+    settings, calls = ui_setup
+    seed_current_with_old_audit_gaps(settings)
+    instant = datetime(2026, 10, 26, 19, tzinfo=SHANGHAI)
+    for module in ("quantview.operations.health", "quantview.operations.calendar"):
+        monkeypatch.setattr(module + ".shanghai_now", lambda value=None: value or instant)
+    app = AppTest.from_file(str(APP), default_timeout=30).run()
+    assert not app.exception
+    assert not any("此前展示" in item.value for item in app.caption)
+    app.button(key="futures_update_latest").click().run()
+    assert calls == [(date(2026, 10, 26), {"trigger_type": "catch_up", "allow_ai": False})]
+
+
+def test_latest_update_does_not_depend_on_older_calendar_coverage(ui_setup):
+    settings, calls = ui_setup
+    seed_current_with_old_audit_gaps(settings)
+    with Repository(settings.database_path).connect() as connection:
+        connection.execute("DELETE FROM exchange_calendar WHERE trade_date='2026-10-22'")
+    app = AppTest.from_file(str(APP), default_timeout=30).run()
+    assert not app.exception
+    assert app.button(key="catch_up_latest").disabled  # Historical plan is unknown.
+    assert not app.button(key="futures_update_latest").disabled
+    app.button(key="futures_update_latest").click().run()
+    assert calls == [(date(2026, 10, 23), {"trigger_type": "catch_up", "allow_ai": False})]

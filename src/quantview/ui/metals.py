@@ -3,13 +3,19 @@ from __future__ import annotations
 import json
 
 import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
 
 from quantview.metals.models import MetalsSettings, fund_asset
 from quantview.metals.service import MetalsService, gold_silver_ratio, indicators
 from quantview.operations.clock import shanghai_now
-from quantview.ui.charts import style
+from quantview.ui.data_status import render_market_status
+from quantview.ui.market_terminal import (
+    load_market,
+    render_asset_detail,
+    render_comparison,
+    render_watch_table,
+)
+from quantview.ui.market_update import render_job_status, update_button
 
 METALS = {"gold": "黄金", "silver": "白银", "unknown": "未确认"}
 
@@ -53,12 +59,10 @@ def _card(asset, snapshot, attempt, settings):
             st.warning(f"已距今 {age} 个自然日，超过本地陈旧阈值；请核对来源与休市情况。")
         metrics = indicators(snapshot)
         st.write(f"5 个观测变化 **{_percent(metrics['change_5'])}** · 20 个观测变化 **{_percent(metrics['change_20'])}**")
-        st.caption(f"最近 60 个观测最大回撤 {_percent(metrics['drawdown_60'])} · 样本 {metrics['drawdown_count']}/60")
         if snapshot["quality"]["rejected_rows"]:
             st.warning(f"本批剔除 {len(snapshot['quality']['rejected_rows'])} 条无效收盘价；变化按有效观测计算。")
         fetched = pd.Timestamp(snapshot["fetched_at"]).strftime("%Y-%m-%d %H:%M")
-        st.caption(f"获取：{fetched}（上海时间） · 来源：AKShare / {'上金所' if asset.kind == 'SGE' else '新浪财经'}")
-        st.markdown(f"[查看来源]({asset.source_url})")
+        st.caption(f"获取：{fetched}（上海） · AKShare / {'上金所' if asset.kind == 'SGE' else '新浪财经'}")
         if asset.kind != "SGE":
             st.caption(f"{asset.kind} 类别由行情目录核验；关注金属“{METALS[asset.metal]}”是用户标记，尚未核验基金合同和跟踪标的。")
 
@@ -66,62 +70,50 @@ def _card(asset, snapshot, attempt, settings):
 def render_metals(settings: MetalsSettings) -> None:
     service = MetalsService(settings)
     st.caption("QUANTVIEW / PRECIOUS METALS")
-    st.title("贵金属工作台")
+    header, action = st.columns([4, 1])
+    header.title("贵金属工作台")
+    with action:
+        update_button(service, "更新公开行情", "metals_sync")
     st.caption("黄金 · 白银 / 国内现货、基金自选与来源证据")
     st.sidebar.caption("公开行情与农产品分开更新；打开页面只读本地缓存。")
     if st.sidebar.button("刷新贵金属缓存", key="metals_refresh"):
         st.rerun()
-    if st.button("更新公开行情", key="metals_sync", type="primary"):
-        try:
-            with st.status("正在采集公开行情…", expanded=True) as progress:
-                result = service.sync(on_progress=lambda asset: st.write(f"采集 {asset.symbol} · 最长 {settings.timeout_seconds} 秒"))
-                failures = [row for row in result["results"] if row["status"] == "failed"]
-                progress.update(label="行情更新完成" if not failures else "部分或全部来源未成功，保留旧数据", state="complete" if not failures else "error")
-            st.session_state["metals_sync_result"] = result
-        except (ValueError, OSError) as exc:
-            st.error(str(exc))
-    st.caption("日线参考，非实时；当日数据在上海时间 18:10 前暂不展示。各市场交易日历尚未接入，新鲜度按自然日提示。价格变化和回撤均非个人投资收益。")
+    render_job_status(service)
 
     try:
         assets = service.assets()
     except (ValueError, OSError, KeyError, TypeError) as exc:
         st.error(f"无法读取基金自选：{exc}")
         return
-    snapshots, attempts = {}, {}
-    for asset in assets:
-        try:
-            snapshots[asset.asset_id] = service.latest(asset)
-            attempts[asset.asset_id] = service.attempt(asset)
-        except (ValueError, OSError, KeyError, TypeError) as exc:
-            snapshots[asset.asset_id] = None
-            attempts[asset.asset_id] = {"status": "failed", "error": str(exc)}
+    snapshots, attempts = load_market(service, assets)
+
+    render_market_status([
+        {"行情日期": snapshots[a.asset_id]["quotes"][-1]["trade_date"] if snapshots[a.asset_id] else None}
+        for a in assets
+    ], stale_after=settings.stale_after_calendar_days, compact=True)
 
     market, funds, channels = st.tabs(["市场观察", "基金自选", "积存金与实物"])
     with market:
         benchmarks = [asset for asset in assets if asset.kind == "SGE"]
-        for column, asset in zip(st.columns(len(benchmarks)), benchmarks, strict=True):
-            with column:
-                _card(asset, snapshots[asset.asset_id], attempts[asset.asset_id], settings)
+        summary = st.columns(len(benchmarks) + 1)
+        for column, asset in zip(summary[:-1], benchmarks, strict=True):
+            snapshot = snapshots[asset.asset_id]
+            quotes = snapshot["quotes"] if snapshot else []
+            change = quotes[-1]["close"] / quotes[-2]["close"] - 1 if len(quotes) > 1 else None
+            column.metric(f"{asset.symbol} · {asset.price_unit}", f"{quotes[-1]['close']:,.3f}" if quotes else "—", _percent(change), delta_color="inverse")
+            column.caption(f"{quotes[-1]['trade_date']} · {asset.name}" if quotes else "尚无缓存")
+            attempt = attempts.get(asset.asset_id)
+            if attempt and attempt["status"] == "failed":
+                column.warning(f"{asset.symbol} 最近更新失败：{attempt['error']}")
         ratio, note = gold_silver_ratio(snapshots.get("sge_Au9999"), snapshots.get("sge_Ag9999"))
-        st.metric("金银比 · 同日现货收盘参考", f"{ratio:.2f}" if ratio is not None else "—")
-        st.caption(note)
-        ready = [asset for asset in assets if snapshots[asset.asset_id]]
-        st.subheader("价格与窗口变化")
-        if ready:
-            chosen = st.selectbox("观察标的", ready, format_func=lambda a: f"{snapshots[a.asset_id]['verification']['name']} · {a.symbol} ({a.price_unit})", key="metals_chart_asset")
-            snapshot = snapshots[chosen.asset_id]
-            frame = pd.DataFrame(snapshot["quotes"])
-            window = st.radio("观测范围", ["最近 60 个观测", "全部缓存"], horizontal=True, key="metals_chart_window")
-            shown = frame.tail(60) if window == "最近 60 个观测" else frame
-            figure = go.Figure(go.Scatter(x=shown["trade_date"], y=shown["close"], mode="lines", name="收盘参考价", line={"color": "#b8872e", "width": 2.5}))
-            st.plotly_chart(style(figure, f"{chosen.symbol} · 日线参考", chosen.price_unit), width="stretch")
-            st.caption("横轴为来源日期；未核验应有交易日，不据此推断缺失日或连续交易日。基金行情未请求复权，不用于含分红的总回报。")
-            with st.expander("行情明细与版本证据"):
-                st.dataframe(frame.sort_values("trade_date", ascending=False), hide_index=True, width="stretch")
-                st.download_button("下载该版本行情 CSV", frame.to_csv(index=False), f"{chosen.asset_id}_{snapshot['version']}.csv", "text/csv", key="metals_download_quotes")
-                st.json({key: value for key, value in snapshot.items() if key not in {"raw_payload", "quotes"}})
-        else:
-            st.info("尚无行情。点击上方“更新公开行情”后，这里显示趋势和版本证据。")
+        summary[-1].metric("金银比 · 同日现货收盘参考", f"{ratio:.2f}" if ratio is not None else "—")
+        with st.expander("金银比口径与日线时间说明"):
+            st.caption(note)
+            st.caption("当日来源数据在上海时间 18:10 前不展示。交易日历未核验，新鲜度按自然日提示；价格变化均非个人投资收益。")
+        render_watch_table(assets, snapshots, attempts, settings, prefix="metals")
+        render_asset_detail(assets, snapshots, attempts, prefix="metals")
+        with st.expander("多标的走势与相关矩阵"):
+            render_comparison(assets, snapshots, prefix="metals")
 
     with funds:
         st.subheader("你的基金观察清单")
@@ -132,12 +124,23 @@ def render_metals(settings: MetalsSettings) -> None:
         for asset in fund_assets:
             _card(asset, snapshots[asset.asset_id], attempts[asset.asset_id], settings)
         default = "\n".join(f"{a.symbol}, {a.kind}, {METALS[a.metal]}" for a in fund_assets)
+        if "metals_watchlist_base" not in st.session_state:
+            st.session_state["metals_watchlist_base"] = [
+                {"code": a.symbol, "kind": a.kind, "metal": a.metal} for a in fund_assets
+            ]
+        if st.button("重新载入已保存清单", key="metals_watchlist_reload"):
+            st.session_state["metals_watchlist_text"] = default
+            st.session_state["metals_watchlist_base"] = [
+                {"code": a.symbol, "kind": a.kind, "metal": a.metal} for a in fund_assets
+            ]
         with st.form("metals_watchlist_form"):
             text = st.text_area("每行：代码, ETF或LOF, 黄金或白银或未确认", value=default, placeholder="填写实际持有或关注的产品；最多 10 只", height=150, key="metals_watchlist_text")
             st.caption("以本次列表替换全部基金自选；清空并保存可移除自选，已采集的历史行情版本仍保留。")
             if st.form_submit_button("保存基金自选", key="metals_watchlist_save"):
                 try:
-                    service.save_watchlist(parse_watchlist(text))
+                    rows = parse_watchlist(text)
+                    service.save_watchlist(rows, expected=st.session_state["metals_watchlist_base"])
+                    st.session_state["metals_watchlist_base"] = rows
                     st.session_state["metals_watchlist_saved"] = True
                     st.rerun()
                 except (ValueError, OSError) as exc:

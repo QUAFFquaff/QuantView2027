@@ -125,3 +125,36 @@ def test_historical_backfill_restores_data_without_passing_daily_trial(repositor
     assert result["overall_status"] == "healthy"
     assert result["trial"]["completed_days"] == 0
     assert not result["trial"]["passed"]
+
+
+def test_history_distinguishes_existing_summary_data_from_unverified_runs(repository, calendar):
+    for target in (19, 20, 21, 22):
+        repository.replace_frame("product_daily", pd.DataFrame([
+            {"trade_date": date(2026, 10, target), "product": product}
+            for product in PRODUCTS
+        ]), "trade_date", [date(2026, 10, target)])
+    seed(repository, date(2026, 10, 19), status="partial", verified=False)
+    seed(repository, date(2026, 10, 23))
+    result = build_health_snapshot(repository, PRODUCTS, as_of=date(2026, 10, 23), calendar=calendar)
+    assert result["overall_status"] == "healthy"
+    assert result["catch_up"]["count"] == 4  # Legacy audit plan, not quote gaps.
+    assert result["history"]["checked_trading_days"] == 5
+    assert result["history"]["summary_missing_count"] == 0
+    assert result["history"]["run_pending_count"] == 4
+    old = repository.query("select status, stages from pipeline_run where target_trade_date=?", [date(2026, 10, 19)]).iloc[0]
+    assert old["status"] == "partial" and '"unknown"' in old["stages"]
+
+
+def test_history_reports_missing_products_instead_of_counting_all_audit_gaps(repository, calendar):
+    for target in (19, 20, 21, 22):
+        products = PRODUCTS - {"JD"} if target == 21 else PRODUCTS
+        repository.replace_frame("product_daily", pd.DataFrame([
+            {"trade_date": date(2026, 10, target), "product": product}
+            for product in products
+        ]), "trade_date", [date(2026, 10, target)])
+    seed(repository, date(2026, 10, 23))
+    result = build_health_snapshot(repository, PRODUCTS, as_of=date(2026, 10, 23), calendar=calendar)
+    assert result["history"]["summary_missing_dates"] == ["2026-10-21"]
+    assert result["history"]["summary_missing_details"] == [{"trade_date": "2026-10-21", "missing_products": ["JD"]}]
+    assert result["history"]["run_pending_count"] == 3
+    assert result["catch_up"]["count"] == 4

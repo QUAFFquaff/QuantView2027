@@ -157,10 +157,10 @@ def import_calendar(
     verified: bool = False,
     exchange: str = "DCE",
 ) -> dict:
-    """Import a human-verified, gap-free natural-day calendar atomically.
+    """Import a verified, gap-free natural-day calendar atomically.
 
-    The confirmation attests to the file's verification; the application does
-    not certify an arbitrary uploaded file as an exchange-issued calendar.
+    The confirmation attests to source/content verification by the caller or
+    supported public-data adapter; arbitrary files are not exchange-certified.
     """
     if not verified:
         raise ValueError("请先核验日历来源与内容，并显式确认 verified")

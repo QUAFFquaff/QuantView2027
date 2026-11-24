@@ -5,6 +5,7 @@ from pathlib import Path
 from streamlit.testing.v1 import AppTest
 
 from quantview.config import Settings
+from quantview.metals.jobs import wait_update
 from quantview.metals.models import MetalsSettings
 from quantview.metals.service import MetalsService
 
@@ -52,6 +53,8 @@ def test_explicit_update_shows_dated_quotes_and_failure_keeps_old_price(tmp_path
     app.radio(key="workspace").set_value("贵金属").run()
     assert not calls
     app.button(key="metals_sync").click().run()
+    wait_update(tmp_path)
+    app.run()
     assert not app.exception
     assert calls == ["Au99.99", "Ag99.99"]
     assert any(item.value == "850.000" for item in app.metric)
@@ -64,6 +67,8 @@ def test_explicit_update_shows_dated_quotes_and_failure_keeps_old_price(tmp_path
 
     monkeypatch.setattr("quantview.metals.service.fetch_in_worker", fail)
     app.button(key="metals_sync").click().run()
+    wait_update(tmp_path)
+    app.run()
     assert not app.exception
     assert any(item.value == "850.000" for item in app.metric)
     assert any("synthetic outage" in item.value for item in app.warning)
@@ -94,6 +99,8 @@ def test_fund_page_appends_without_overwriting_and_explicitly_updates_only_funds
     assert service.watchlist()[0].metal == "unknown"
     assert not calls
     app.button(key="funds_sync").click().run()
+    wait_update(tmp_path)
+    app.run()
     assert not app.exception
     assert calls == [asset.symbol for asset in service.watchlist()]
     assert all(service.latest(asset)["quotes"][-1]["close"] == 1.25 for asset in service.watchlist())

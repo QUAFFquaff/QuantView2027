@@ -127,6 +127,44 @@ def test_lock_blocks_writer_without_damaging_cache(tmp_path):
     assert (service.root / "write.lock").read_text() == "another writer"
 
 
+def test_lock_permission_error_gives_restart_hint_without_fetching(tmp_path, monkeypatch):
+    import quantview.metals.service as storage
+
+    service = MetalsService(MetalsSettings(tmp_path))
+    service.root.mkdir(parents=True)
+    original_open = storage.os.open
+    calls = []
+
+    def denied(path, *args, **kwargs):
+        if str(path).endswith("write.lock"):
+            raise PermissionError(13, "fixture permission denied", str(path))
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(storage.os, "open", denied)
+    with pytest.raises(ValueError, match="正常 Windows PowerShell"):
+        service.sync(fetcher=lambda *args: calls.append(args), now=NOW)
+    assert not calls
+    assert not (service.root / "write.lock").exists()
+    assert not list(service.root.glob("*/versions/*.json"))
+
+
+def test_lock_permission_error_does_not_remove_an_existing_lock(tmp_path, monkeypatch):
+    import quantview.metals.service as storage
+
+    service = MetalsService(MetalsSettings(tmp_path))
+    service.root.mkdir(parents=True)
+    lock = service.root / "write.lock"
+    lock.write_text("another writer")
+
+    def denied(*args, **kwargs):
+        raise PermissionError(13, "fixture permission denied")
+
+    monkeypatch.setattr(storage.os, "open", denied)
+    with pytest.raises(ValueError, match="写入权限"):
+        service.save_watchlist([])
+    assert lock.read_text() == "another writer"
+
+
 def test_changed_snapshot_fails_hash_validation(tmp_path):
     service = MetalsService(MetalsSettings(tmp_path))
     service.sync(fetcher=lambda *args: payload(), now=NOW)

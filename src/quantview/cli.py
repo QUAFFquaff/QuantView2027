@@ -53,6 +53,10 @@ def build_parser() -> argparse.ArgumentParser:
     calendar.add_argument("--source", required=True, help="Verified source name or URL")
     calendar.add_argument("--version", required=True, help="Source release or verification version")
     calendar.add_argument("--verified", action="store_true", required=True, help="Confirm you verified the file")
+    sync = commands.add_parser("sync-calendar", help="Back up and import a public annual DCE calendar; reuse local copies by default")
+    sync.add_argument("--year", type=int, help="Calendar year, defaults to the Shanghai current year")
+    sync.add_argument("--refresh", action="store_true", help="Explicitly download and validate the public source again")
+    sync.add_argument("--offline", action="store_true", help="Restore the local verified backup without any network access")
     discover = commands.add_parser("discover-contracts", help="Discover and register LH/JD/C contracts")
     discover.add_argument("--date", type=_date)
     daily = commands.add_parser("run-daily", help="Run for the most recent verified day due after 18:10 Shanghai")
@@ -63,8 +67,8 @@ def build_parser() -> argparse.ArgumentParser:
     backfill.add_argument("--start", type=_date, required=True)
     backfill.add_argument("--end", type=_date, required=True)
     backfill.add_argument("--with-ai", action="store_true", help="Explicitly enable historical AI analysis")
-    catch_up = commands.add_parser("catch-up", help="Explicitly rerun the latest missing verified trading day")
-    catch_up.add_argument("--all", action="store_true", help="Explicitly rerun the whole displayed missing interval")
+    catch_up = commands.add_parser("catch-up", help="Explicitly rebuild unverified daily runs; use run-daily to refresh the latest ready day")
+    catch_up.add_argument("--all", action="store_true", help="Explicitly rebuild every displayed day lacking a verified complete run")
     manual = commands.add_parser("import-file", help="Import a CSV or Excel fallback data file")
     manual.add_argument("path")
     metals = commands.add_parser("metals", help="Public precious-metal observations; independent of DCE calendars")
@@ -87,6 +91,11 @@ def _execute(args: argparse.Namespace) -> int:
         _print(result)
         return 0 if args.action == "status" or result["status"] == "success" else 1
     repository = Repository(settings.database_path)
+    if args.command == "sync-calendar":
+        from quantview.operations.calendar_sync import sync_calendar
+
+        _print(sync_calendar(settings, year=args.year, refresh=args.refresh, offline=args.offline))
+        return 0
     calendar = load_calendar(repository, settings.calendar_exchange)
     if args.command == "status":
         health = build_health_snapshot(

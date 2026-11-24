@@ -10,7 +10,7 @@ from quantview import config
 from quantview.data.repository import Repository
 from quantview.operations import build_health_snapshot
 from quantview.operations.calendar import load_calendar
-from quantview.ui.catch_up import render_calendar_controls
+from quantview.ui.catch_up import render_calendar_controls, render_update_controls
 from quantview.ui.charts import contract_prices, fixed_spread, main_history, style
 from quantview.ui.queries import WorkbenchQueries, important_changes, json_value
 
@@ -22,13 +22,23 @@ LABELS = {
 }
 UNITS = {"LH": "元/吨", "JD": "元/500千克", "C": "元/吨"}
 CSS = """<style>
-.stApp { background: var(--background-color, #f5f7fa); }
-.block-container { padding-top: 4.5rem; max-width: 1440px; }
-h1, h2, h3 { color: var(--text-color, #172e42); letter-spacing: -.025em; }
-[data-testid="stSidebar"] { background: var(--secondary-background-color, #edf2f5); }
-[data-testid="stMetricValue"] { color: var(--text-color, #173d50); }
-[data-testid="stVerticalBlockBorderWrapper"] > div { border-radius: 14px; }
+.stApp { background: var(--background-color, #0f141c); }
+.block-container { padding: 3.5rem 2rem 2rem; max-width: 1640px; }
+h1, h2, h3 { color: var(--text-color, #e5edf5); letter-spacing: -.025em; }
+h1 { font-size: 1.9rem !important; font-weight: 650 !important; padding-top: 0 !important; }
+h2 { font-size: 1.35rem !important; }
+h3 { font-size: 1.1rem !important; }
+[data-testid="stSidebar"] { background: var(--secondary-background-color, #19222e); }
+[data-testid="stMetric"] { padding: .65rem .85rem; background: #151e2a; border: 1px solid #283547; border-radius: 8px; }
+[data-testid="stMetricValue"] { color: var(--text-color, #e5edf5); font-size: 1.65rem; font-variant-numeric: tabular-nums; }
+[data-testid="stMetricLabel"] { color: #a3b2c5; font-size: .8rem; }
+[data-testid="stVerticalBlockBorderWrapper"] > div { border-radius: 9px; }
 [data-testid="stTabs"] button { font-weight: 600; }
+[data-testid="stTabs"] [data-baseweb="tab-list"] { border-bottom: 1px solid #283547; gap: 1.5rem; }
+[data-testid="stDataFrame"] { border: 1px solid #283547; border-radius: 8px; overflow: hidden; }
+[data-testid="stCaptionContainer"] { color: #8e9fb5; }
+[data-testid="stExpander"] { border-color: #283547; }
+button[kind="primary"] { font-weight: 650; }
 @media (max-width: 640px) {
  .block-container { padding: 4.5rem 1rem 1rem; }
  [data-testid="stHorizontalBlock"] { flex-wrap: wrap; }
@@ -178,7 +188,7 @@ class Dashboard:
             st.plotly_chart(contract_prices(history, f"{contract} · 真实合约行情", unit), width="stretch")
             left, right = st.columns(2)
             for column, field, label in ((left, "volume", "成交量"), (right, "open_interest", "持仓量")):
-                figure = go.Figure(go.Bar(x=history["trade_date"], y=history[field], name=label, marker_color="#428e96"))
+                figure = go.Figure(go.Bar(x=history["trade_date"], y=history[field], name=label, marker_color="#5db6bd"))
                 column.plotly_chart(style(figure, label, "手"), width="stretch")
             st.caption("总持仓不代表主动买卖方向。OHLC 为真实字段，结算价是否替代见质量证据。")
             with st.expander("行情、来源与质量证据"):
@@ -300,13 +310,20 @@ def render():
     st.caption("QUANTVIEW / AGRICULTURAL FUTURES")
     st.title("农产品期货研究看板")
     st.caption("生猪 · 鸡蛋 · 玉米 / 日频行情、期限结构与研究证据")
-    st.sidebar.metric("运行状态", LABELS[health["overall_status"]])
+    status_label = LABELS[health["overall_status"]]
+    if health["overall_status"] == "calendar_unknown":
+        status_label = "未导入交易日历" if not health["calendar"].get("coverage_start") else "日历覆盖不足"
+    st.sidebar.metric("运行状态", status_label)
     if st.sidebar.button("刷新本地数据", key="refresh_local"):
         st.rerun()
     dates = queries.dates()
+    pending_date = st.session_state.pop("quantview_select_date", None)
+    if pending_date in dates:
+        st.session_state["trade_date"] = pending_date
     target = st.sidebar.selectbox("交易日", dates, key="trade_date") if dates else None
     st.sidebar.caption("只读取本地数据；日历与补跑操作见下方。")
     render_calendar_controls(settings, health)
+    render_update_controls(settings, health)
     dashboard = Dashboard(settings, queries, health, target)
     dashboard.header()
     tabs = st.tabs(["今日总览", "品种研究", "期限结构", "日报与系统状态"])
