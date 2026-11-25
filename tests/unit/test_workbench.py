@@ -105,6 +105,18 @@ def test_quality_events_precede_roll_events_and_are_deterministic(workbench):
     assert len(first) <= 5
 
 
+def test_unverified_universe_does_not_claim_contracts_are_missing(workbench):
+    _, repository = workbench
+    view = WorkbenchQueries(repository)
+    events = important_changes(
+        view.products(date(2026, 10, 21)),
+        {"C": {"status": "partial", "missing_contracts": []}},
+        {"C": view.bars("C", date(2026, 10, 21))},
+    )
+    assert "合约集合或完整性尚未核验" in events[0]
+    assert "缺少合约" not in events[0]
+
+
 def test_partial_dashboard_and_widgets_render_without_starting_pipeline(workbench, monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("Browsing must not run the pipeline")
@@ -137,3 +149,26 @@ def test_failed_only_date_keeps_all_tabs_and_error_evidence(workbench):
     assert len(app.tabs) == 4
     assert any("没有品种指标" in item.value for item in app.warning)
     assert any("fixture failure" in item.value for item in app.json)
+
+
+def test_review_workspace_reads_saved_reports_without_running_pipeline(workbench, monkeypatch):
+    settings, _ = workbench
+    directory = settings.root / "data/exports/private-review"
+    directory.mkdir(parents=True)
+    (directory / "market-review-2026-11-11.md").write_text("OLDER_REVIEW", encoding="utf-8")
+    (directory / "market-review-2026-11-12.md").write_text("LATEST_REVIEW", encoding="utf-8")
+    (directory / "market-review-2026-13-99.md").write_text("INVALID_REVIEW", encoding="utf-8")
+    (directory / "market-review-2026-11-12-metrics.json").write_text("{}", encoding="utf-8")
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Reading reviews must not run the pipeline")
+
+    monkeypatch.setattr("quantview.ui.catch_up.DailyPipeline.run", forbidden)
+    app = AppTest.from_file(str(APP), default_timeout=30).run()
+    app.radio(key="workspace").set_value("行情复盘").run()
+    assert not app.exception
+    assert app.selectbox(key="review_date").value == date(2026, 11, 12)
+    assert any(item.value == "LATEST_REVIEW" for item in app.markdown)
+    app.selectbox(key="review_date").select(date(2026, 11, 11)).run()
+    assert not app.exception
+    assert any(item.value == "OLDER_REVIEW" for item in app.markdown)

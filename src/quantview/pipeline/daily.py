@@ -66,6 +66,7 @@ class DailyPipeline:
         self.settings = settings
         self.repository = Repository(settings.database_path)
         self.universe_sources: dict[str, str] = {}
+        self.discovery_warnings: dict[str, list[str]] = {}
         self.adapters = {
             "akshare_sina": AkshareSinaAdapter(),
             "akshare_em": AkshareEastmoneyAdapter(),
@@ -81,15 +82,35 @@ class DailyPipeline:
             discovered = self.adapters["akshare_sina"].discover_contracts(product, config["name"])
         except DataSourceError:
             pass
-        live_discovery = bool(discovered)
         existing = self.repository.query(
-            "SELECT contract_code FROM instrument WHERE product=? AND is_active=true", [product]
+            """SELECT contract_code FROM instrument WHERE product=? AND is_active=true
+               AND (listed_date IS NULL OR listed_date<=?)
+               AND (last_trade_date IS NULL OR last_trade_date>=?)""",
+            [product, target, target],
         )
-        if live_discovery:
-            return sorted(set(discovered)), True
-        candidates = set(existing.get("contract_code", pd.Series(dtype=str)).tolist())
+        local_codes = existing.get("contract_code", pd.Series(dtype=str)).tolist()
+        allowed = set(config["allowed_delivery_months"])
+        target_month = target.year * 12 + target.month
+        eligible = {}
+        for code in set(discovered) | set(local_codes):
+            try:
+                instrument = parse_contract_code(code, reference_date=target)
+            except ValueError:
+                continue
+            delivery_month = instrument.delivery_year * 12 + instrument.delivery_month
+            if (
+                instrument.product == product
+                and instrument.delivery_month in allowed
+                and target_month <= delivery_month <= target_month + 12
+            ):
+                eligible[code] = instrument.contract_code
+        rejected = sorted(set(discovered) - eligible.keys())
+        if rejected:
+            self.discovery_warnings[product] = rejected
+        if discovered and not rejected:
+            return sorted({eligible[code] for code in discovered}), True
+        candidates = set(eligible.values())
         if not candidates:
-            allowed = set(config["allowed_delivery_months"])
             for offset in range(0, 13):
                 month_index = target.year * 12 + target.month - 1 + offset
                 year, month_zero = divmod(month_index, 12)
@@ -101,6 +122,7 @@ class DailyPipeline:
     def discover_instruments(self, target: date) -> list[Instrument]:
         instruments: list[Instrument] = []
         self.universe_sources = {}
+        self.discovery_warnings = {}
         for product, config in self.settings.products.items():
             contracts, live_discovery = self._candidate_contracts(product, target)
             self.universe_sources[product] = "live_discovery" if live_discovery else "local_candidates"
@@ -269,7 +291,11 @@ class DailyPipeline:
         try:
             with pipeline_lock(lock_path):
                 instruments = self.discover_instruments(target)
-                stages["discover"] = {"status": "success", "instruments": len(instruments)}
+                stages["discover"] = {
+                    "status": "partial" if self.discovery_warnings else "success",
+                    "instruments": len(instruments),
+                    "rejected_contracts": self.discovery_warnings,
+                }
                 lookback = int(self.settings.app["pipeline"].get("default_lookback_days", 90))
                 start = target - timedelta(days=lookback)
                 for instrument in instruments:

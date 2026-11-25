@@ -26,7 +26,7 @@ def _run(settings: Settings, targets: list[date], trigger: str, *, data_only=Fal
             for target in targets:
                 try:
                     options = {"trigger_type": trigger}
-                    if data_only:
+                    if data_only or trigger == "manual":
                         options["allow_ai"] = False
                     result = pipeline.run(target, **options)
                 except Exception as exc:
@@ -109,6 +109,7 @@ def render_calendar_controls(settings: Settings, health: dict) -> None:
     state = health["calendar"]
     st.sidebar.caption(f"上海日终采集时间：{settings.scheduled_time:%H:%M}")
     st.sidebar.caption(f"应更新交易日：{health['expected_trade_date'] or '无法确认'}")
+    st.sidebar.caption(f"已有行情截至：{health['latest_market_date'] or '暂无'}")
     st.sidebar.caption(f"最近完整日：{health['latest_complete_date'] or '暂无'}")
     if state["status"] != "verified":
         message = "尚未导入交易日历，请在下方同步并备份。" if not state.get("coverage_start") else "交易日历未覆盖当前选日范围，请同步相应年度。"

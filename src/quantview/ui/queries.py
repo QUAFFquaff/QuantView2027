@@ -96,7 +96,9 @@ def important_changes(products, completeness, bars_by_product):
         quality = completeness.get(product, {})
         row = rows.get(product)
         if row is None or quality.get("status", "unknown") != "complete":
-            events.append((0, product, "覆盖", f"{product}：数据缺失或覆盖未确认；缺少合约：{'、'.join(quality.get('missing_contracts', [])) or '详见质量证据'}"))
+            missing = quality.get("missing_contracts", [])
+            detail = f"缺少合约：{'、'.join(missing)}" if missing else "合约集合或完整性尚未核验"
+            events.append((0, product, "覆盖", f"{product}：覆盖未确认；{detail}，请查看质量证据。"))
         bars = bars_by_product[product]
         if row is None:
             continue

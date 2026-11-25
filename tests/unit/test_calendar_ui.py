@@ -148,3 +148,33 @@ def test_latest_update_does_not_depend_on_older_calendar_coverage(ui_setup):
     assert not app.button(key="futures_update_latest").disabled
     app.button(key="futures_update_latest").click().run()
     assert calls == [(date(2026, 10, 23), {"trigger_type": "catch_up", "allow_ai": False})]
+
+
+def test_manual_date_update_works_without_verified_calendar_only_on_click(ui_setup):
+    settings, calls = ui_setup
+    app = AppTest.from_file(str(APP), default_timeout=30).run()
+    assert not calls
+    app.date_input(key="manual_market_date").set_value(date(2026, 10, 23)).run()
+    app.checkbox(key="manual_market_confirm").check().run()
+    app.button(key="manual_market_submit").click().run()
+    assert not app.exception
+    assert calls == [(date(2026, 10, 23), {"trigger_type": "manual", "allow_ai": False})]
+    app.run()
+    assert len(calls) == 1
+    assert not settings.database_path.exists()  # The fake pipeline performs no writes.
+
+
+@pytest.mark.parametrize("target,message", [
+    (date(2026, 10, 26), "尚未到"),
+    (date(2026, 10, 25), "非交易日"),
+])
+def test_manual_update_rejects_premature_or_known_closed_dates(ui_setup, target, message):
+    settings, calls = ui_setup
+    seed_calendar(settings)
+    app = AppTest.from_file(str(APP), default_timeout=30).run()
+    app.date_input(key="manual_market_date").set_value(target).run()
+    app.checkbox(key="manual_market_confirm").check().run()
+    app.button(key="manual_market_submit").click().run()
+    assert not app.exception
+    assert not calls
+    assert any(message in item.value for item in app.error)

@@ -284,7 +284,12 @@ def render():
     st.markdown(CSS, unsafe_allow_html=True)
     settings = config.load_settings(Path.cwd())
     st.sidebar.title("QuantView2027")
-    workspace = st.sidebar.radio("工作台", ["农产品期货", "贵金属", "基金价格与暴露"], key="workspace")
+    workspace = st.sidebar.radio("工作台", ["农产品期货", "贵金属", "基金价格与暴露", "行情复盘"], key="workspace")
+    if workspace == "行情复盘":
+        from quantview.ui.reviews import render_reviews
+
+        render_reviews(settings.root)
+        return
     if workspace == "基金价格与暴露":
         from quantview.metals.models import load_metals_settings
         from quantview.ui.funds import render_funds
